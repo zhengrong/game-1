@@ -1,0 +1,2 @@
+gd-tools-cli==0.4.0
+gdtoolkit==4.5.0

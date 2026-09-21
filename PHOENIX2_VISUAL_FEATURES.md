@@ -1,5 +1,9 @@
 # Phoenix 2 Visual Match — Feature List
 
+For gameplay, fleet, abilities, missions, progression, online systems, and implementation priorities, see [the full feature gap analysis](PHOENIX2_FEATURE_PARITY.md). This document remains the detailed visual specification for the sampled weapon and presentation.
+
+Implementation update (2026-09-21): the packet renderer has been replaced by `combat/beam_visual.gd`, which draws a connected shaft, attached deforming wings, an attack fan, and a residual release line. Controlled Godot frames have been inspected; exact reference timing and phone validation remain pending. See [the mission checklist](MISSION_VISUAL_CHECKLIST.md) for the wider implementation status.
+
 This checklist records the visual behavior observed in the Phoenix 2 reference footage and screenshot. It is the acceptance specification for the demo rather than a list of loosely similar effects.
 
 Reference video: [Official Phoenix 2 weapons clip](https://video.fastly.steamstatic.com/store_trailers/2678070/797799/ccfeab03628337da155e49dfa6f63673d43cdafd/1750818537/microtrailer.mp4)
@@ -62,11 +66,11 @@ Reference video: [Official Phoenix 2 weapons clip](https://video.fastly.steamsta
 
 ### Current implementation status
 
-- [ ] Replace the current separated packet-chain treatment.
-- [ ] Replace per-packet morphing with deformation across one connected shaft.
-- [ ] Remove uniform packet spacing and repeated static symbols.
-- [ ] Strengthen the continuous core from muzzle to impact.
-- [ ] Make the release visibly contract into a thin residual line.
+- [x] Replace the current separated packet-chain treatment.
+- [x] Replace per-packet morphing with deformation across one connected shaft.
+- [x] Remove uniform packet spacing and repeated static symbols.
+- [x] Strengthen the continuous core from muzzle to impact.
+- [x] Make the release visibly contract into a thin residual line.
 
 ## 2. Ship scale and framing
 

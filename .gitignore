@@ -1,3 +1,10 @@
 # Godot 4+ specific ignores
 .godot/
 /android/
+
+# Generated test dependencies and reports
+.venv-test/
+.gd-tools/
+coverage/
+addons/gut/
+addons/gd-tools-coverage/

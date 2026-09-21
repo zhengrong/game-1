@@ -1,0 +1,15 @@
+[godot]
+
+[test]
+test_dirs = ["tests/unit"]
+prefix = "test_"
+suffix = ".gd"
+gutconfig = ".gutconfig.json"
+
+[coverage]
+enabled = true
+min_percent = 95
+format = "html"
+output_dir = "coverage"
+exclude = ["addons/gut", "addons/gd-tools-coverage", ".godot", ".gd-tools", ".git", ".venv-test", "tests"]
+test_dirs = ["tests"]
