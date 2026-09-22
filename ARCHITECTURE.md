@@ -61,3 +61,17 @@ updates position from a profile; `EnemyWeapons` emits projectile requests connec
 by the coordinator. Hull kind controls appearance/rewards, and optional mounts
 retain their separate warning/fire state machines. Shared profiles contain no
 runtime timers or mutable per-enemy health.
+
+## Player ships
+
+`ShipDefinition` composes hull/handling values with weapon, engine, and ability
+resources. `ShipState` owns per-player mutable values and its weapon cycle.
+The coordinator binds these services and reads the selected definition through
+legacy forwarding properties. See [ship authoring](ships/README.md).
+
+## Defensive abilities
+
+`ShieldConfig` selects Aura geometry and Personal Shield rules; `ShieldSystem`
+owns charging, deployed fields, durability, and swept intersections. `ShieldVisual`
+reads state without changing combat. The coordinator routes inputs/energy and
+applies deferred laser reflection. See [shield implementation notes](shields/README.md).

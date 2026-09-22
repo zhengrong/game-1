@@ -108,6 +108,8 @@ static func update(game, enemy: Dictionary, delta: float) -> void:
 		if turret["state"] == "firing" and turret["kind"] == "laser":
 			var start: Vector2 = turret["origin"]
 			var end: Vector2 = start + Vector2.from_angle(turret["angle"]) * LASER_LENGTH
+			end = game._intercept_laser(start, end, delta)
+			turret["blocked_end"] = end
 			var nearest := Geometry2D.get_closest_point_to_segment(game.player_pos, start, end)
 			if nearest.distance_to(game.player_pos) < LASER_RADIUS + game.PLAYER_RADIUS:
 				game._damage_player()
@@ -125,6 +127,7 @@ static func draw_hazards(game, enemy: Dictionary) -> void:
 			origin = enemy["pos"] + turret["offset"] + direction * 24.0
 		var end := origin + direction * LASER_LENGTH
 		if phase == "firing":
+			end = turret.get("blocked_end", end)
 			game.draw_line(origin, end, Color(1.0, 0.035, 0.01, 0.16), 27.0, true)
 			game.draw_line(origin, end, Color(2.0, 0.16, 0.025, 0.95), LASER_RADIUS * 2.0, true)
 			game.draw_line(origin, end, Color(3.2, 1.6, 0.65), 3.0, true)

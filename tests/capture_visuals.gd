@@ -5,6 +5,8 @@ func _initialize() -> void:
 
 func capture() -> void:
 	var game = load("res://main.tscn").instantiate()
+	if "--bulwark" in OS.get_cmdline_user_args():
+		game.ship_definition = preload("res://ships/bulwark.tres")
 	root.add_child(game)
 	game.set_process(false)
 	game.start_encounter_preview()
@@ -59,6 +61,6 @@ func save_frame(game, label: String) -> void:
 	await process_frame
 	await RenderingServer.frame_post_draw
 	var img := root.get_texture().get_image()
-	var error := img.save_png("/tmp/starfall-captures/%s.png" % label)
+	var error := img.save_png("/tmp/starfall-captures/%s%s.png" % ["bulwark-" if "--bulwark" in OS.get_cmdline_user_args() else "", label])
 	if error != OK:
 		push_error("Capture failed: " + label)

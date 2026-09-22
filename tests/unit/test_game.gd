@@ -751,3 +751,194 @@ func test_custom_mission_boss_is_not_automatic_victory() -> void:
 	assert_eq(game.state, game.GameState.VICTORY)
 	game.start_encounter_preview()
 	assert_eq(game.enemies[0]["kind"], "heavy", "Preview does not depend on mission stage count")
+
+func test_select_ship_applies_loadout_and_clears_old_combat() -> void:
+	var bulwark = preload("res://ships/bulwark.tres")
+	game.start_game()
+	game._spawn_twin_shots()
+	game._start_player_beam()
+	game.select_ship(bulwark)
+	assert_eq(game.player_hp, 5)
+	assert_eq(game.MAX_AURA, 140.0)
+	assert_eq(game.MAX_NOVA, 120.0)
+	assert_eq(game.PLAYER_RADIUS, 14.0)
+	assert_eq(game.PLAYER_SPEED, 520.0)
+	assert_true(game.twin_shots)
+	assert_true(game.player_bullets.is_empty())
+	assert_eq(game.beam_visible_timer, 0.0)
+	game._spawn_twin_shots()
+	assert_eq(game.player_bullets[0]["damage"], 32.0)
+	assert_eq(game.player_bullets[0]["vel"], Vector2(0, -1800))
+	assert_eq(game.player_bullets[0]["pos"], game.player_pos + Vector2(-26, -80))
+	game.player_invulnerable = 0.0
+	game._damage_player()
+	assert_eq(game.player_hp, 4)
+	game.start_game()
+	assert_eq(game.player_hp, 5)
+	assert_eq(bulwark.health, 5)
+
+func test_configured_beam_damage_and_offset_are_used() -> void:
+	var definition = preload("res://ships/ship_definition.gd").new()
+	definition.muzzle = Vector2(40, -80)
+	definition.weapon.beam_damage = 5.0
+	game.select_ship(definition)
+	game.player_pos = Vector2(300, 800)
+	game._spawn_boss()
+	var target: Dictionary = game.enemies[0]
+	target["pos"] = Vector2(340, 300)
+	target["radius"] = 15.0
+	var health: float = target["hp"]
+	game._fire_player_weapon()
+	assert_eq(target["hp"], health - 5.0)
+
+func test_shield_loadout_controls_projectiles_and_laser_reflection() -> void:
+	game.select_ship(preload("res://ships/guardian.tres"))
+	game.player_pos = Vector2(360, 850)
+	game.shields.reset(game.ship_definition.shields, game.player_pos)
+	game.mouse_aura = true
+	game._update_player(0.01)
+	assert_eq(game.shields.fields.size(), 1)
+	assert_eq(game.aura_energy, 0.0)
+	game._update_player(0.01)
+	assert_eq(game.shields.fields.size(), 1, "Holding an aura button cannot repeatedly deploy")
+	game.enemy_bullets.append(bullet(Vector2(360, 400), Vector2(0, 2000)))
+	game._update_enemy_bullets(0.3)
+	assert_true(game.enemy_bullets.is_empty(), "Shield stops a swept projectile before hull damage")
+	game.shields.fields.clear()
+	game.zen_button = true
+	game.mouse_aura = false
+	game._update_player(0.6)
+	assert_true(game.shields.protected())
+	game._spawn_boss()
+	var target: Dictionary = game.enemies[0]
+	var hp: float = target["hp"]
+	var end: Vector2 = game._intercept_laser(Vector2(360, 100), Vector2(360, 1500), 0.1)
+	assert_lt(end.y, game.player_pos.y)
+	assert_eq(target["hp"], hp, "Reflection applies after enemy iteration")
+	game._apply_shield_reflections()
+	assert_almost_eq(target["hp"], hp - 2.0, 0.001)
+	assert_eq(game.reflected_rays.size(), 1)
+	game.player_invulnerable = 0.0
+	game._damage_player()
+	assert_eq(game.player_hp, 3)
+	game._try_nova()
+	assert_eq(game.nova_energy, 18.0, "Personal Shield never consumes nova energy")
+	game.queue_redraw()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	game.shields.advance(0.1, game.player_pos, false)
+	game.queue_redraw()
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+func test_shield_touch_selection_release_and_pause() -> void:
+	var event := InputEventScreenTouch.new()
+	event.pressed = true
+	event.index = 0
+	event.position = Vector2(game.screen_size.x * 0.75, game.screen_size.y * 0.96)
+	game._unhandled_input(event)
+	assert_eq(game.ship_definition.display_name, "Phalanx")
+	event.position = game.player_pos
+	game._unhandled_input(event)
+	event.pressed = false
+	game._unhandled_input(event)
+	assert_true(game.zen_released)
+	game._update_player(0.3)
+	assert_gt(game.shields.charge, 0.0)
+	game.queue_redraw()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	event.pressed = true
+	game._unhandled_input(event)
+	game._update_player(0.01)
+	assert_eq(game.shields.charge, 0.0)
+	event.index = 1
+	event.position = game._nova_button_rect().get_center()
+	game._unhandled_input(event)
+	assert_true(game.zen_button)
+	event.pressed = false
+	game._unhandled_input(event)
+	assert_false(game.zen_button)
+	game.shields.deploy(100.0, 100.0)
+	for strength in [24.0, 10.0, 2.0, 0.0]:
+		game.shields.fields[0]["strength"] = strength
+		game.shields.fields[0]["fading"] = strength == 0.0
+		game.queue_redraw()
+		await get_tree().process_frame
+		await get_tree().process_frame
+	game.paused = true
+	var age: float = game.shields.fields[0]["fade"]
+	game._process(1.0)
+	assert_eq(game.shields.fields[0]["fade"], age)
+	game.start_game()
+	assert_true(game.shields.fields.is_empty())
+
+func test_barrier_rendering_and_personal_timeout() -> void:
+	game.select_ship(preload("res://ships/guardian.tres"))
+	game.shields.deploy(100.0, 100.0)
+	game.shields.intercept(game.player_pos - Vector2(0, 400), game.player_pos, 4.0)
+	game.queue_redraw()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	game.shields.advance(0.6, game.player_pos, true)
+	game.shields.advance(2.5, game.player_pos, true)
+	assert_gt(game.shields.fade, 0.0)
+	game.shields.advance(0.3, game.player_pos, true)
+	assert_false(game.shields.protected())
+	assert_true(game.shields.exhausted)
+
+func test_zen_holds_position_and_stops_main_weapon() -> void:
+	game.select_ship(preload("res://ships/guardian.tres"))
+	game._start_player_beam()
+	game.pointer_active = true
+	game.player_target = game.player_pos + Vector2(100, -100)
+	game.zen_button = true
+	var origin: Vector2 = game.player_pos
+	game._update_player(0.1)
+	assert_eq(game.player_pos, origin)
+	assert_eq(game.beam_visible_timer, 0.0)
+	game.zen_button = false
+	game._update_player(0.1)
+	assert_ne(game.player_pos, origin)
+	assert_gt(game.beam_visible_timer, 0.0)
+
+func test_kill_energy_arrives_only_on_collection_and_does_not_charge_zen() -> void:
+	game.select_ship(load("res://ships/guardian.tres"))
+	game.aura_energy = 0.0
+	var original_nova: float = game.nova_energy
+	enemy_at("scout", game.player_pos - Vector2(0, 500))
+	game._destroy_enemy(game.enemies.size() - 1)
+	assert_eq(game.aura_energy, 0.0, "Death must not credit remote energy")
+	assert_eq(game.pickups.size(), 1)
+	game._on_stage_cleared()
+	assert_eq(game.aura_energy, 0.0, "Stage completion must not bypass collection")
+	game._update_pickups(0.1)
+	assert_eq(game.aura_energy, 0.0, "Energy must visibly travel before collection")
+	for step in range(240):
+		game._update_pickups(1.0 / 60.0)
+	assert_eq(game.pickups.size(), 0, "Energy homes from beyond the old attraction radius")
+	assert_almost_eq(game.aura_energy, 12.0, 0.001)
+	assert_eq(game.nova_energy, original_nova, "Collected energy does not charge Zen")
+	game._update_pickups(1.0)
+	assert_almost_eq(game.aura_energy, 12.0, 0.001, "A pickup credits energy exactly once")
+
+func test_heavy_drop_budget_swept_collection_and_victory() -> void:
+	game.start_game()
+	game.aura_energy = 0.0
+	game.nova_energy = 0.0
+	enemy_at("heavy", Vector2(300, 300))
+	game._destroy_enemy(game.enemies.size() - 1)
+	assert_eq(game.aura_energy, 0.0)
+	assert_eq(game.nova_energy, 0.0)
+	assert_eq(game.pickups.size(), 3)
+	for pickup in game.pickups:
+		pickup["pos"] = game.player_pos
+	game._update_pickups(0.01)
+	assert_almost_eq(game.aura_energy, 20.0, 0.001)
+	assert_almost_eq(game.nova_energy, 16.5, 0.001)
+	game.pickups.append({"pos": game.player_pos - Vector2(100, 0),
+		"vel": Vector2(2000, 0), "life": 3.0, "aura": 5.0})
+	game.state = game.GameState.VICTORY
+	game._process(0.1)
+	assert_eq(game.pickups.size(), 0, "Fast energy cannot tunnel through the ship, even after victory")
+	assert_almost_eq(game.aura_energy, 25.0, 0.001)

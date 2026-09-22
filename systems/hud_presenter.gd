@@ -1,8 +1,8 @@
 extends RefCounted
 ## Presentation snapshot: no reference to the game or mutable combat services.
 const GameState = preload("res://systems/game_types.gd").GameState
-const MAX_AURA = 100.0
-const MAX_NOVA = 100.0
+var MAX_AURA: float = 100.0
+var MAX_NOVA: float = 100.0
 const TAU_F = TAU
 var state: GameState = GameState.TITLE
 var screen_size := Vector2(720.0, 1280.0)
@@ -16,6 +16,7 @@ var stage_count := 4
 var stage_title := ""
 var elapsed := 0.0
 var player_hp := 3
+var player_max_hp := 3
 var enemies: Array[Dictionary] = []
 var aura_energy := MAX_AURA
 var aura_active := false
@@ -23,6 +24,10 @@ var nova_energy := 0.0
 var aura_exhausted := false
 var wave_banner := 0.0
 var graze_count := 0
+var aura_label := "PULSE"
+var zen_label := "NOVA"
+var zen_fill := 0.0
+var zen_active := false
 
 func _draw_ui(canvas: Node2D) -> void:
 	match state:
@@ -54,6 +59,8 @@ func _draw_title(canvas: Node2D) -> void:
 	_draw_centered(canvas, "HOLD PULSE  •  SPACE / LB", panel.position.y + 79.0, 16, Color(0.28, 0.9, 1.0))
 	_draw_centered(canvas, "TRIGGER NOVA  •  E / RB", panel.position.y + 112.0, 16, Color(1.0, 0.67, 0.24))
 	_draw_centered(canvas, "AUTO FIRE · V: SWITCH WEAPON", panel.position.y + 153.0, 15, Color(0.58, 0.65, 0.79))
+	_draw_text(canvas, "GUARDIAN · F3", Vector2(screen_size.x * 0.12, screen_size.y * 0.96), 16, Color(0.5, 0.75, 1.0))
+	_draw_text(canvas, "PHALANX · F4", Vector2(screen_size.x * 0.61, screen_size.y * 0.96), 16, Color(1.0, 0.45, 0.85))
 	var pulse := 0.72 + sin(Time.get_ticks_msec() * 0.004) * 0.2
 	_draw_centered(canvas, "F2  /  HEAVY ENCOUNTER", screen_size.y * 0.89, 16, Color(0.65, 0.8, 0.92))
 	_draw_centered(canvas, "CLICK OR TAP TO LAUNCH", screen_size.y * 0.83, 22, Color(0.76, 0.94, 1.0, pulse))
@@ -71,9 +78,9 @@ func _draw_hud(canvas: Node2D) -> void:
 		canvas.draw_line(Vector2(screen_size.x * 0.5 - 42 + step * 22, 70), Vector2(screen_size.x * 0.5 - 26 + step * 22, 70), c, 3.0)
 
 	_draw_text(canvas, "HULL", Vector2(screen_size.x - 105.0, 27.0), 13, Color(0.42, 0.56, 0.75))
-	for i in range(3):
+	for i in range(player_max_hp):
 		var c := Color(0.25, 0.9, 1.0) if i < player_hp else Color(0.16, 0.2, 0.29)
-		canvas.draw_circle(Vector2(screen_size.x - 91.0 + i * 28.0, 55.0), 8.0, c)
+		canvas.draw_circle(Vector2(screen_size.x - 91.0 + i * minf(28.0, 84.0 / maxf(1.0, player_max_hp)), 55.0), 8.0, c)
 
 	if not enemies.is_empty():
 		for enemy in enemies:
@@ -87,13 +94,13 @@ func _draw_hud(canvas: Node2D) -> void:
 	var pause_rect := _pause_button_rect()
 	canvas.draw_rect(pause_rect, Color(0.02, 0.05, 0.09, 0.85))
 	_draw_text(canvas, "II", pause_rect.position + Vector2(17, 29), 22, Color(0.75, 0.9, 1.0))
-	_draw_ability_button(canvas, _aura_button_rect(), "PULSE", aura_energy / MAX_AURA, Color(0.15, 0.76, 1.0), aura_active)
-	_draw_ability_button(canvas, _nova_button_rect(), "NOVA", nova_energy / MAX_NOVA, Color(1.0, 0.52, 0.14), nova_energy >= MAX_NOVA)
+	_draw_ability_button(canvas, _aura_button_rect(), aura_label, aura_energy / MAX_AURA, Color(0.15, 0.76, 1.0), aura_active)
+	_draw_ability_button(canvas, _nova_button_rect(), zen_label, zen_fill, Color(1.0, 0.52, 0.14), zen_active)
 	if aura_exhausted:
 		_draw_text(canvas, "RECHARGING", Vector2(20, screen_size.y - 135), 12, Color(0.4, 0.75, 0.9))
 	if encounter_preview:
 		_draw_centered(canvas, "BREAK SHIELD · AIM AT SIDE TURRETS", 119.0, 14, Color(0.55, 0.85, 1.0))
-		_draw_centered(canvas, "PULSE CLEARS BULLETS · DODGE LASERS", 145.0, 12, Color(0.85, 0.65, 0.42))
+		_draw_centered(canvas, ("PULSE CLEARS BULLETS · DODGE LASERS" if aura_label == "PULSE" else "TAP " + aura_label + " · RELEASE TO SHIELD"), 145.0, 12, Color(0.85, 0.65, 0.42))
 	if wave_banner > 0.0:
 		var title := "FINAL WAVE" if wave == stage_count else "WAVE %d" % wave
 		var subtitle: String = stage_title

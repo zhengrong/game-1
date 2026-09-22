@@ -1,0 +1,35 @@
+[gd_resource type="Resource" load_steps=8 format=3]
+[ext_resource type="Script" path="res://ships/ship_definition.gd" id="ship"]
+[ext_resource type="Script" path="res://combat/weapon_config.gd" id="weapon"]
+[ext_resource type="Script" path="res://ships/ability_config.gd" id="abilities"]
+[ext_resource type="Script" path="res://ships/engine_config.gd" id="engines"]
+[sub_resource type="Resource" id="weapon_config"]
+script = ExtResource("weapon")
+twin_damage = 32.0
+twin_speed = 1800.0
+twin_interval = 0.34
+twin_offsets = PackedVector2Array(-26, 0, 26, 0)
+[sub_resource type="Resource" id="ability_config"]
+script = ExtResource("abilities")
+aura_capacity = 140.0
+aura_radius = 135.0
+aura_recharge = 8.0
+nova_capacity = 120.0
+nova_initial = 24.0
+[sub_resource type="Resource" id="engine_config"]
+script = ExtResource("engines")
+offsets = PackedVector2Array(-22, 70, 22, 70)
+color = Color(1, 0.5, 0.1, 1)
+scale = 1.2
+[resource]
+script = ExtResource("ship")
+display_name = "Bulwark"
+health = 5
+speed = 520.0
+collision_radius = 14.0
+visual_size = Vector2(160, 168)
+muzzle = Vector2(0, -80)
+default_twin_shots = true
+weapon = SubResource("weapon_config")
+abilities = SubResource("ability_config")
+engines = SubResource("engine_config")

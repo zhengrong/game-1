@@ -1,5 +1,6 @@
 extends Node2D
 ## Additive light only: reads combat state and never advances timers or RNG.
+const ShieldVisual = preload("res://shields/shield_visual.gd")
 const LIGHT = preload("res://combat/flare_texture.tres")
 var game: Node2D
 
@@ -12,20 +13,23 @@ func _ready() -> void:
 func _draw() -> void:
 	if game.state == game.GameState.TITLE:
 		return
+	ShieldVisual.draw(self, game.shields, game.aura_energy, game.MAX_AURA, game.reflected_rays)
 	# Pause keeps the underlying flash frozen but lets the pause UI dominate.
 	modulate.a = 0.25 if game.paused else 1.0
 	if game.state == game.GameState.PLAYING and game.player_hp > 0:
 		var engine := 0.7 + sin(game.elapsed * 42.0) * 0.08
-		for side in [-1.0, 1.0]:
-			var port: Vector2 = game.player_pos + Vector2(side * game.PLAYER_ENGINE_SPREAD, game.PLAYER_ENGINE_Y)
-			light(port + Vector2(0, 12), Vector2(21, 66), Color(0.08, 0.55, 1.6, engine))
-			light(port, Vector2(12, 20), Color(1.2, 1.8, 2.0, engine))
+		for offset in game.ship_definition.engines.offsets:
+			var port: Vector2 = game.player_pos + offset
+			var profile = game.ship_definition.engines
+			var tint: Color = profile.color
+			light(port + Vector2(0, 12), Vector2(21, 66) * profile.scale, Color(tint.r * 0.8, tint.g * (0.55 / 0.78), tint.b * 1.6, engine))
+			light(port, Vector2(12, 20) * profile.scale, Color(1.2, 1.8, 2.0, engine))
 		game._draw_player_beam(self)
 	for shot in game.player_bullets:
 		if shot.get("style", "") != "twin" or shot.get("delay", 0.0) > 0.0:
 			continue
 		var head: Vector2 = shot["pos"]
-		var tail_length: float = minf(220.0, shot["age"] * 2100.0)
+		var tail_length: float = minf(220.0, shot["age"] * shot["vel"].length())
 		var tail := PackedVector2Array()
 		for i in range(13):
 			var t := float(i) / 12.0
