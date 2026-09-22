@@ -1,4 +1,6 @@
 extends Node2D
-## Menus and ability buttons stay above both threats and scene postprocessing.
+## The composition root supplies a renderer; hierarchy is not part of the API.
+var render: Callable
+
 func _draw() -> void:
-	get_parent().get_parent()._draw_ui(self)
+	render.call(self)

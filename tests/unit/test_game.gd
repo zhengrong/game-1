@@ -226,13 +226,13 @@ func test_shield_and_turret_damage_routing() -> void:
 	game.start_encounter_preview()
 	var enemy: Dictionary = game.enemies[0]
 	var hp: float = enemy["hp"]
-	game.HeavyEnemy.damage(game, enemy, 102.0, enemy["pos"], 1)
+	game._damage_heavy(enemy, 102.0, enemy["pos"], 1)
 	assert_eq(enemy["shield"], 0.0)
 	assert_eq(enemy["hp"], hp)
 	assert_eq(enemy["turrets"][1]["hp"], 85.0)
 	game.player_pos.x = enemy["pos"].x + 43.0
 	assert_eq(game._query_beam_hit(false)["part"], 1)
-	game.HeavyEnemy.damage(game, enemy, 85.0, enemy["pos"], 1)
+	game._damage_heavy(enemy, 85.0, enemy["pos"], 1)
 	assert_eq(enemy["turrets"][1]["state"], "destroyed")
 	assert_eq(enemy["hp"], hp)
 
@@ -520,8 +520,8 @@ func test_laser_warning_lock_damage_and_cancel() -> void:
 	game.HeavyEnemy.update(game, enemy, 0.01)
 	assert_eq(game.player_hp, 2)
 	enemy["shield"] = 0.0
-	game.HeavyEnemy.damage(game, enemy, 85.0, origin, 1)
-	game.HeavyEnemy.damage(game, enemy, 85.0, origin, 1)
+	game._damage_heavy(enemy, 85.0, origin, 1)
+	game._damage_heavy(enemy, 85.0, origin, 1)
 	game.player_invulnerable = 0.0
 	game.HeavyEnemy.update(game, enemy, 0.1)
 	assert_eq(game.player_hp, 2)

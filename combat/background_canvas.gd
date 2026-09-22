@@ -1,4 +1,5 @@
 extends Node2D
+var game: Node2D
 
 func _draw() -> void:
-	get_parent()._draw_background(self)
+	game._draw_background(self)

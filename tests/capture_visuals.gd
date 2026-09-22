@@ -33,7 +33,7 @@ func capture() -> void:
 	game.player_pos.x = 403.0
 	game._update_beam_visual(0.01)
 	await save_frame(game, "laser-active")
-	game.HeavyEnemy.damage(game, enemy, 85.0, enemy["pos"] + laser["offset"], 1)
+	game._damage_heavy(enemy, 85.0, enemy["pos"] + laser["offset"], 1)
 	game.beam_visible_timer = 0.014
 	game._update_beam_visual(0.01)
 	await save_frame(game, "turret-destroyed-release")

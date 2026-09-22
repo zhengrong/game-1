@@ -1,4 +1,5 @@
 extends RefCounted
+const DamageResult = preload("res://combat/damage_result.gd")
 ## Heavy combat state, component targeting, and readable weapon presentation.
 const SHIELD_RADIUS := 91.0
 const TURRET_RADIUS := 19.0
@@ -32,34 +33,35 @@ static func surfaces(enemy: Dictionary) -> Array[Dictionary]:
 			result.append({"pos": enemy["pos"] + turret["offset"], "radius": TURRET_RADIUS, "part": i})
 	return result
 
-static func damage(game, enemy: Dictionary, amount: float, point: Vector2, part: int = -1) -> void:
+static func damage(enemy: Dictionary, amount: float, point: Vector2, part: int = -1) -> DamageResult:
+	var result := DamageResult.new()
+	result.origin = point
 	if enemy["shield"] > 0.0:
 		enemy["shield"] = maxf(0.0, enemy["shield"] - amount)
 		enemy["shield_flash"] = 1.0
 		enemy["shield_hit"] = (point - Vector2(enemy["pos"])).normalized()
-		game._spawn_sparks(point, Color(0.25, 1.4, 2.6), 4, 110.0)
-		if enemy["shield"] <= 0.0:
-			game._spawn_energy_burst(enemy["pos"], Color(0.2, 0.85, 1.8), 0.75)
+		result.kind = DamageResult.Kind.SHIELD
+		result.destroyed = enemy["shield"] <= 0.0
+		if result.destroyed:
 			enemy["shield_break"] = 0.65
-			game.shockwaves.append({"pos": enemy["pos"], "radius": SHIELD_RADIUS, "max": 135.0, "life": 0.45, "color": Color(0.2, 0.8, 1.0)})
-			game.play_sound("shield_break")
-		return
+		return result
 	if part >= 0:
 		var turret: Dictionary = enemy["turrets"][part]
 		if turret["hp"] <= 0.0:
-			return
+			return result
 		turret["hp"] = maxf(0.0, turret["hp"] - amount)
 		turret["flash"] = 0.16
-		game._spawn_sparks(point, Color(2.0, 0.8, 0.2), 5, 160.0)
-		if turret["hp"] <= 0.0:
+		result.kind = DamageResult.Kind.TURRET
+		result.destroyed = turret["hp"] <= 0.0
+		if result.destroyed:
 			turret["state"] = "destroyed"
-			game._spawn_explosion(enemy["pos"] + turret["offset"], Color(1.0, 0.45, 0.12), 10, 105.0)
-			game.play_sound("turret_down")
-			game.score += 250
+			result.origin = enemy["pos"] + turret["offset"]
+			result.score = 250
 	else:
 		enemy["hp"] -= amount
 		enemy["hit_flash"] = 0.7
-		game._spawn_sparks(point, Color(2.0, 0.65, 0.12), 3, 130.0)
+		result.kind = DamageResult.Kind.HULL
+	return result
 
 static func update(game, enemy: Dictionary, delta: float) -> void:
 	enemy["shield_flash"] = maxf(0.0, enemy["shield_flash"] - delta * 4.0)

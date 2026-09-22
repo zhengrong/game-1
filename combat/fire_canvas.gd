@@ -1,4 +1,5 @@
 extends Node2D
+var game: Node2D
 ## A separate material keeps procedural fire out of the beam and HUD passes.
 const FIRE_SHADER = preload("res://combat/fire_volume.gdshader")
 const QUAD = preload("res://combat/flare_texture.tres")
@@ -9,7 +10,6 @@ func _ready() -> void:
 	material = fire_material
 
 func _draw() -> void:
-	var game = get_parent()
 	if game.state == game.GameState.TITLE:
 		return
 	for particle in game.particles:

@@ -3,13 +3,14 @@ extends Node2D
 # Starfall Protocol: a self-contained vertical bullet-hell demo.
 # Textured ships with procedural combat effects and synthesized audio.
 
+const CollisionQueries = preload("res://combat/collision_queries.gd")
 const Missile = preload("res://combat/missile.gd")
 const EnvironmentVisual = preload("res://combat/environment_visual.gd")
 const BeamVisual = preload("res://combat/beam_visual.gd")
 const HeavyEnemy = preload("res://combat/heavy_enemy.gd")
 const FireVisual = preload("res://combat/fire_visual.gd")
 
-enum GameState { TITLE, PLAYING, GAME_OVER, VICTORY }
+const GameState = preload("res://systems/game_types.gd").GameState
 
 const PLAYER_RADIUS := 11.0
 const PLAYER_SPEED := 680.0
@@ -39,9 +40,22 @@ const FIREBALL_TEXTURE: Texture2D = preload("res://assets/effects/fireball.png")
 const SMOKE_TEXTURE: Texture2D = preload("res://assets/effects/smoke.png")
 const BATTLEFIELD_BACKGROUND: Texture2D = preload("res://assets/backgrounds/amber_megastructure_hd.png")
 
+var weapon = preload("res://combat/weapon_cycle.gd").new()
+var effects = preload("res://systems/effects_system.gd").new()
+var audio = preload("res://systems/game_audio.gd").new()
+var hud = preload("res://systems/hud_presenter.gd").new()
+
 var state: GameState = GameState.TITLE
-var twin_shots := false
-var twin_timer := 0.0
+var twin_shots: bool:
+	get:
+		return weapon.twin_shots
+	set(value):
+		weapon.twin_shots = value
+var twin_timer: float:
+	get:
+		return weapon.twin_timer
+	set(value):
+		weapon.twin_timer = value
 var screen_size := Vector2(720.0, 1280.0)
 var rng := RandomNumberGenerator.new()
 var font: Font
@@ -51,15 +65,23 @@ var background_panels: Array[Dictionary] = []
 var enemies: Array[Dictionary] = []
 var player_bullets: Array[Dictionary] = []
 var enemy_bullets: Array[Dictionary] = []
-var particles: Array[Dictionary] = []
+var particles: Array[Dictionary]:
+	get:
+		return effects.particles
 var pickups: Array[Dictionary] = []
-var shockwaves: Array[Dictionary] = []
+var shockwaves: Array[Dictionary]:
+	get:
+		return effects.shockwaves
 
 var player_pos := Vector2.ZERO
 var player_target := Vector2.ZERO
 var player_hp := 3
 var player_invulnerable := 0.0
-var shot_timer := 0.0
+var shot_timer: float:
+	get:
+		return weapon.shot_timer
+	set(value):
+		weapon.shot_timer = value
 var aura_energy := MAX_AURA
 var aura_active := false
 var nova_energy := 0.0
@@ -89,22 +111,56 @@ var paused := false
 var flash := 0.0
 var shake := 0.0
 var muzzle_flash := 0.0
-var shot_sequence := 0
+var shot_sequence: int:
+	get:
+		return weapon.shot_sequence
+	set(value):
+		weapon.shot_sequence = value
 var beam_end := Vector2.ZERO
-var beam_contact := false
-var beam_overcharged := false
-var beam_visible_timer := 0.0
-var beam_pause_timer := 0.0
-var beam_age := 0.0
+var beam_contact: bool:
+	get:
+		return weapon.beam_contact
+	set(value):
+		weapon.beam_contact = value
+var beam_overcharged: bool:
+	get:
+		return weapon.beam_overcharged
+	set(value):
+		weapon.beam_overcharged = value
+var beam_visible_timer: float:
+	get:
+		return weapon.beam_visible_timer
+	set(value):
+		weapon.beam_visible_timer = value
+var beam_pause_timer: float:
+	get:
+		return weapon.beam_pause_timer
+	set(value):
+		weapon.beam_pause_timer = value
+var beam_age: float:
+	get:
+		return weapon.beam_age
+	set(value):
+		weapon.beam_age = value
 var beam_damage_sequence := 0
 var thruster_timer := 0.0
 
-var sound_pool: Array[AudioStreamPlayer] = []
-var sound_cursor := 0
-var sounds: Dictionary = {}
+var sound_pool: Array[AudioStreamPlayer]:
+	get:
+		return audio.sound_pool
 
 
 func _ready() -> void:
+	weapon.damage_requested.connect(_fire_player_weapon)
+	weapon.beam_started.connect(_on_beam_started)
+	weapon.twin_requested.connect(_spawn_twin_shots)
+	effects.rng = rng
+	$Backdrop.game = self
+	$World.game = self
+	$Flares.game = self
+	$Fire.game = self
+	$ThreatLayer/Threats.game = self
+	$InterfaceLayer/Interface.render = _draw_ui
 	rng.randomize()
 	# Linear filtering preserves the deliberately broad, high-contrast armor
 	# features in the gameplay-sized ship art. Mipmaps made these small hulls
@@ -307,39 +363,7 @@ func _update_player(delta: float) -> void:
 
 
 func _update_player_weapon_cycle(delta: float) -> void:
-	if twin_shots:
-		var remaining := delta
-		while remaining > 0.000001:
-			var step := minf(remaining, twin_timer)
-			twin_timer -= step
-			remaining -= step
-			if twin_timer <= 0.000001:
-				_spawn_twin_shots(delta - remaining)
-				twin_timer = 0.28
-		return
-	# Consume the elapsed interval across shot and phase boundaries. Damage rate
-	# stays consistent at 30/60/120 FPS, including frames spanning recovery.
-	var remaining := delta
-	while remaining > 0.000001:
-		if beam_visible_timer <= 0.000001:
-			var pause_step := minf(remaining, beam_pause_timer)
-			beam_pause_timer -= pause_step
-			remaining -= pause_step
-			if beam_pause_timer <= 0.000001:
-				_start_player_beam()
-		else:
-			var step := minf(remaining, minf(beam_visible_timer, shot_timer))
-			beam_visible_timer -= step
-			beam_age += step
-			shot_timer -= step
-			remaining -= step
-			if beam_visible_timer <= 0.000001:
-				beam_visible_timer = 0.0
-				beam_contact = false
-				beam_pause_timer = PLAYER_BEAM_PAUSE_TIME
-			elif shot_timer <= 0.000001:
-				_fire_player_weapon()
-				shot_timer = PLAYER_SHOT_INTERVAL
+	weapon.advance(delta)
 
 
 func _spawn_twin_shots(delay: float = 0.0) -> void:
@@ -350,13 +374,10 @@ func _spawn_twin_shots(delay: float = 0.0) -> void:
 
 
 func _start_player_beam() -> void:
-	shot_sequence += 1
-	beam_overcharged = shot_sequence % 4 == 0
-	beam_visible_timer = PLAYER_BEAM_FIRE_TIME
-	beam_pause_timer = 0.0
-	beam_age = 0.0
-	shot_timer = PLAYER_SHOT_INTERVAL
-	_fire_player_weapon()
+	weapon.start_beam()
+
+
+func _on_beam_started() -> void:
 	muzzle_flash = PLAYER_BEAM_ATTACK_TIME
 	_spawn_muzzle_flash(player_pos + PLAYER_NOSE_OFFSET)
 
@@ -369,7 +390,7 @@ func _fire_player_weapon() -> void:
 		var target := enemies[target_index]
 		var hit_pos := Vector2(player_pos.x, hit["end_y"])
 		if target.has("turrets"):
-			HeavyEnemy.damage(self, target, 31.0 if beam_overcharged else 17.0, hit_pos, hit["part"])
+			_damage_heavy(target, 31.0 if beam_overcharged else 17.0, hit_pos, hit["part"])
 		else:
 			target["hp"] -= 31.0 if beam_overcharged else 17.0
 		if not target.has("turrets"):
@@ -385,26 +406,8 @@ func _fire_player_weapon() -> void:
 
 
 func _query_beam_hit(overcharged: bool) -> Dictionary:
-	var result := {"index": -1, "end_y": -24.0, "part": -1}
-	var beam_radius := 8.5 if overcharged else 6.5
-	var muzzle := player_pos + PLAYER_NOSE_OFFSET
-	for i in range(enemies.size()):
-		var enemy := enemies[i]
-		var surfaces: Array[Dictionary] = []
-		if enemy.has("turrets"):
-			surfaces = HeavyEnemy.surfaces(enemy)
-		else:
-			surfaces.append({"pos": enemy["pos"], "radius": enemy["radius"] * 0.72, "part": -1})
-		for surface in surfaces:
-			var center: Vector2 = surface["pos"]
-			var radius: float = surface["radius"]
-			var dx := absf(center.x - muzzle.x)
-			if dx > radius + beam_radius or center.y >= muzzle.y:
-				continue
-			var end_y := minf(muzzle.y - 1.0, center.y + sqrt(maxf(0.0, radius * radius - minf(dx, radius) * minf(dx, radius))))
-			if end_y > result["end_y"]:
-				result = {"index": i, "end_y": end_y, "part": surface["part"]}
-	return result
+	var hit := CollisionQueries.beam(enemies, player_pos + PLAYER_NOSE_OFFSET, overcharged)
+	return {"index": hit.index, "end_y": hit.end_y, "part": hit.part}
 
 
 func _update_beam_visual(_delta: float) -> void:
@@ -633,28 +636,15 @@ func _update_player_bullets(delta: float) -> void:
 		bullet["pos"] += bullet["vel"] * step
 		bullet["life"] -= available
 		bullet["age"] = float(bullet.get("age", 0.0)) + step
-		var nearest := 2.0
-		var target_index := -1
-		var target_part := -1
-		for j in range(enemies.size()):
-			var enemy := enemies[j]
-			var surfaces: Array[Dictionary] = []
-			if enemy.has("turrets"):
-				surfaces = HeavyEnemy.surfaces(enemy)
-			else:
-				surfaces.append({"pos": enemy["pos"], "radius": enemy["radius"] * 0.72, "part": -1})
-			for surface in surfaces:
-				var radius: float = bullet["radius"] + surface["radius"]
-				var t := 0.0 if previous.distance_squared_to(surface["pos"]) <= radius * radius else Geometry2D.segment_intersects_circle(previous, bullet["pos"], surface["pos"], radius)
-				if t >= 0.0 and t < nearest:
-					nearest = t
-					target_index = j
-					target_part = surface["part"]
+		var hit := CollisionQueries.sweep(enemies, previous, bullet["pos"], bullet["radius"])
+		var nearest: float = hit.fraction
+		var target_index: int = hit.index
+		var target_part: int = hit.part
 		if target_index >= 0:
 			var target := enemies[target_index]
 			var contact := previous.lerp(bullet["pos"], nearest)
 			if target.has("turrets"):
-				HeavyEnemy.damage(self, target, bullet["damage"], contact, target_part)
+				_damage_heavy(target, bullet["damage"], contact, target_part)
 			else:
 				target["hp"] -= bullet["damage"]
 				target["hit_flash"] = minf(1.0, target["hit_flash"] + 0.42)
@@ -663,6 +653,25 @@ func _update_player_bullets(delta: float) -> void:
 				_destroy_enemy(target_index)
 		if target_index >= 0 or bullet["life"] <= 0.0 or bullet["pos"].y < -35.0:
 			player_bullets.remove_at(i)
+
+
+func _damage_heavy(enemy: Dictionary, amount: float, point: Vector2, part: int = -1) -> void:
+	var outcome := HeavyEnemy.damage(enemy, amount, point, part)
+	match outcome.kind:
+		HeavyEnemy.DamageResult.Kind.SHIELD:
+			_spawn_sparks(point, Color(0.25, 1.4, 2.6), 4, 110.0)
+			if outcome.destroyed:
+				_spawn_energy_burst(enemy["pos"], Color(0.2, 0.85, 1.8), 0.75)
+				shockwaves.append({"pos": enemy["pos"], "radius": HeavyEnemy.SHIELD_RADIUS, "max": 135.0, "life": 0.45, "color": Color(0.2, 0.8, 1.0)})
+				play_sound("shield_break")
+		HeavyEnemy.DamageResult.Kind.TURRET:
+			_spawn_sparks(point, Color(2.0, 0.8, 0.2), 5, 160.0)
+			if outcome.destroyed:
+				_spawn_explosion(outcome.origin, Color(1.0, 0.45, 0.12), 10, 105.0)
+				play_sound("turret_down")
+				score += outcome.score
+		HeavyEnemy.DamageResult.Kind.HULL:
+			_spawn_sparks(point, Color(2.0, 0.65, 0.12), 3, 130.0)
 
 
 func _destroy_enemy(index: int) -> void:
@@ -769,10 +778,10 @@ func _try_nova() -> void:
 	for i in range(enemies.size() - 1, -1, -1):
 		if enemies[i].has("turrets"):
 			var had_shield: bool = enemies[i]["shield"] > 0.0
-			HeavyEnemy.damage(self, enemies[i], 240.0, enemies[i]["pos"])
+			_damage_heavy(enemies[i], 240.0, enemies[i]["pos"])
 			if not had_shield:
 				for part in range(enemies[i]["turrets"].size()):
-					HeavyEnemy.damage(self, enemies[i], 240.0, enemies[i]["pos"], part)
+					_damage_heavy(enemies[i], 240.0, enemies[i]["pos"], part)
 		else:
 			enemies[i]["hp"] -= 180.0 if enemies[i]["kind"] == "boss" else 240.0
 		_spawn_sparks(enemies[i]["pos"], Color(1.0, 0.66, 0.2), 10, 170.0)
@@ -816,251 +825,43 @@ func _update_pickups(delta: float) -> void:
 
 
 func _spawn_sparks(origin: Vector2, color: Color, count: int, speed: float) -> void:
-	for i in range(count):
-		var life := rng.randf_range(0.16, 0.44)
-		particles.append({
-			"kind": "spark",
-			"pos": origin,
-			"vel": Vector2.from_angle(rng.randf_range(0.0, TAU_F)) * rng.randf_range(speed * 0.25, speed),
-			"life": life,
-			"max_life": life,
-			"size": rng.randf_range(1.5, 4.2),
-			"growth": -1.2,
-			"drag": 0.08,
-			"color": color,
-		})
+	effects._spawn_sparks(origin, color, count, speed)
 
 
 func _spawn_muzzle_flash(origin: Vector2) -> void:
-	for i in range(6):
-		var life := rng.randf_range(0.055, 0.14)
-		particles.append({
-			"kind": "plasma",
-			"pos": origin + Vector2(rng.randf_range(-4.0, 4.0), rng.randf_range(-7.0, 3.0)),
-			"vel": Vector2(rng.randf_range(-46.0, 46.0), rng.randf_range(-230.0, -95.0)),
-			"life": life,
-			"max_life": life,
-			"size": rng.randf_range(3.0, 7.5),
-			"growth": -28.0,
-			"drag": 0.12,
-			"color": Color(0.16, 0.82, 2.4),
-		})
-	_spawn_sparks(origin + Vector2(0.0, -4.0), Color(0.42, 1.25, 2.8), 3, 145.0)
+	effects._spawn_muzzle_flash(origin)
 
 
 func _spawn_player_impact(origin: Vector2, velocity: Vector2, overcharged: bool) -> void:
-	var impact_color := Color(0.28, 0.86, 2.4)
-	var spark_count := 9 if overcharged else 5
-	_spawn_sparks(origin, impact_color, spark_count, 210.0 if overcharged else 145.0)
-	var bloom_life := 0.18 if overcharged else 0.12
-	particles.append({
-		"kind": "plasma",
-		"pos": origin,
-		"vel": -velocity.normalized() * 26.0,
-		"life": bloom_life,
-		"max_life": bloom_life,
-		"size": 11.0 if overcharged else 7.0,
-		"growth": 24.0,
-		"drag": 0.08,
-		"color": Color(0.58, 1.35, 3.2),
-	})
-	shockwaves.append({
-		"pos": origin,
-		"radius": 2.0,
-		"max": 25.0 if overcharged else 16.0,
-		"life": 0.19 if overcharged else 0.13,
-		"color": impact_color,
-	})
+	effects._spawn_player_impact(origin, velocity, overcharged)
 
 
 func _spawn_thruster(origin: Vector2, color: Color, scale: float) -> void:
-	var life := rng.randf_range(0.12, 0.21)
-	particles.append({
-		"kind": "plasma",
-		"pos": origin + Vector2(rng.randf_range(-2.0, 2.0), 0.0),
-		"vel": Vector2(rng.randf_range(-35.0, 35.0), rng.randf_range(150.0, 250.0)) * scale,
-		"life": life,
-		"max_life": life,
-		"size": rng.randf_range(3.2, 6.0) * scale,
-		"growth": rng.randf_range(3.0, 12.0) * scale,
-		"drag": 0.32,
-		"color": color,
-	})
-	if rng.randf() < 0.28:
-		var ember_life := rng.randf_range(0.22, 0.45)
-		particles.append({
-			"kind": "spark",
-			"pos": origin,
-			"vel": Vector2(rng.randf_range(-55.0, 55.0), rng.randf_range(120.0, 290.0)) * scale,
-			"life": ember_life,
-			"max_life": ember_life,
-			"size": rng.randf_range(0.8, 2.0) * scale,
-			"growth": -0.5,
-			"drag": 0.45,
-			"color": Color(0.4, 1.7, 3.4),
-		})
+	effects._spawn_thruster(origin, color, scale)
 
 
 func _spawn_damage_fire(origin: Vector2, scale: float, source: Dictionary = {}) -> void:
-	var fire_life := rng.randf_range(0.48, 0.75)
-	particles.append({
-		"kind": "fire",
-		"source": source,
-		"source_pos": source.get("pos", origin),
-		"seed": rng.randf_range(0.0, TAU),
-		"pos": origin,
-		"vel": Vector2(rng.randf_range(-16.0, 16.0), rng.randf_range(-50.0, -22.0)) * scale,
-		"life": fire_life,
-		"max_life": fire_life,
-		"size": rng.randf_range(11.0, 19.0) * scale,
-		"growth": rng.randf_range(7.0, 18.0) * scale,
-		"drag": 0.28,
-		"color": Color(3.2, 0.68, 0.08),
-	})
-	if rng.randf() < 0.52:
-		var smoke_life := rng.randf_range(0.75, 1.35)
-		particles.append({
-			"kind": "smoke",
-			"pos": origin,
-			"vel": Vector2(rng.randf_range(-30.0, 30.0), rng.randf_range(-75.0, -25.0)) * scale,
-			"life": smoke_life,
-			"max_life": smoke_life,
-			"size": rng.randf_range(9.0, 16.0) * scale,
-			"growth": rng.randf_range(14.0, 25.0) * scale,
-			"drag": 0.58,
-			"color": Color(0.14, 0.12, 0.16),
-		})
-	_spawn_sparks(origin, Color(2.8, 0.7, 0.1), 1, 120.0 * scale)
+	effects._spawn_damage_fire(origin, scale, source)
 
 
 func _spawn_hot_fragments(origin: Vector2, count: int, speed: float) -> void:
-	for i in range(count):
-		var life := rng.randf_range(0.65, 1.05)
-		var velocity := Vector2.from_angle(rng.randf_range(0.0, TAU)) * rng.randf_range(speed * 0.5, speed)
-		particles.append({
-			"kind": "ember", "pos": origin, "vel": velocity,
-			"origin": origin, "initial_velocity": velocity, "turn_rate": rng.randf_range(-1.6, 1.6),
-			"trail": PackedVector2Array([origin]), "trail_clock": 0.0,
-			"life": life, "max_life": life, "size": rng.randf_range(3.0, 6.0),
-			"growth": -1.5, "drag": 0.6, "color": Color(2.6, 0.8, 0.12),
-		})
+	effects._spawn_hot_fragments(origin, count, speed)
 
 
 func _spawn_energy_burst(origin: Vector2, tint: Color, scale: float) -> void:
-	# Presentation only: no damage, bullet clearing, or random-number sampling.
-	var pink := tint.r > tint.b
-	var core_life := 1.4 if pink else 0.36
-	var ring_life := 1.5 if pink else 0.55
-	particles.append({"kind": "energy_burst", "pos": origin, "vel": Vector2.ZERO,
-		"life": core_life, "max_life": core_life, "size": scale, "growth": 0.0,
-		"drag": 1.0, "color": tint, "pink": pink})
-	particles.append({"kind": "energy_ring", "pos": origin, "vel": Vector2.ZERO,
-		"life": ring_life, "max_life": ring_life, "size": 72.0 * scale, "growth": 0.0,
-		"drag": 1.0, "color": tint, "palette": 1.0 if pink else 2.0})
+	effects._spawn_energy_burst(origin, tint, scale)
 
 
 func _spawn_explosion(origin: Vector2, color: Color, count: int, speed: float) -> void:
-	var explosion_scale := clampf(speed / 180.0, 0.65, 1.8)
-	particles.append({
-		"kind": "blast_ring", "pos": origin, "vel": Vector2.ZERO,
-		"life": 0.42, "max_life": 0.42, "size": 60.0 * explosion_scale,
-		"growth": 0.0, "drag": 1.0, "color": Color.ORANGE,
-	})
-	_spawn_hot_fragments(origin, clampi(count / 3, 3, 10), speed * 1.2)
-	particles.append({
-		"kind": "ignition", "pos": origin, "vel": Vector2.ZERO,
-		"life": 0.065, "max_life": 0.065, "size": explosion_scale,
-		"growth": 0.0, "drag": 1.0, "color": Color.WHITE,
-	})
-	particles.append({
-		"kind": "flare", "pos": origin, "vel": Vector2.ZERO,
-		"life": 0.22, "max_life": 0.22, "size": explosion_scale * 1.45,
-		"growth": 0.0, "drag": 1.0, "color": Color(1.8, 0.65, 0.12),
-	})
-	for i in range(count):
-		var direction := Vector2.from_angle(rng.randf_range(0.0, TAU_F))
-		if i % 6 == 0:
-			var smoke_life := rng.randf_range(0.8, 1.65)
-			particles.append({
-				"kind": "smoke", "pos": origin + direction * rng.randf_range(0.0, 14.0),
-				"vel": direction * rng.randf_range(speed * 0.04, speed * 0.19) + Vector2(0.0, -22.0),
-				"life": smoke_life, "max_life": smoke_life, "size": rng.randf_range(11.0, 24.0) * explosion_scale,
-				"growth": rng.randf_range(18.0, 34.0), "drag": 0.36, "color": Color(0.16, 0.12, 0.18),
-			})
-		elif i % 3 == 0:
-			var fire_life := rng.randf_range(0.28, 0.72)
-			particles.append({
-				"kind": "fire", "burst": true, "seed": rng.randf_range(0.0, TAU), "pos": origin + direction * rng.randf_range(0.0, 10.0),
-				"vel": direction * rng.randf_range(speed * 0.08, speed * 0.38),
-				"life": fire_life, "max_life": fire_life, "size": rng.randf_range(10.0, 24.0) * explosion_scale,
-				"growth": rng.randf_range(5.0, 18.0), "drag": 0.12, "color": Color(3.6, 0.58, 0.06),
-			})
-		else:
-			var spark_life := rng.randf_range(0.35, 0.95)
-			particles.append({
-				"kind": "spark", "pos": origin + direction * rng.randf_range(0.0, 12.0),
-				"vel": direction * rng.randf_range(speed * 0.18, speed),
-				"life": spark_life, "max_life": spark_life, "size": rng.randf_range(0.8, 2.8) * sqrt(explosion_scale),
-				"growth": -1.0, "drag": 0.08, "color": color.lightened(0.28),
-			})
-	# A compact white-hot ignition flash gives the explosion physical punch.
-	for i in range(4):
-		var core_life := rng.randf_range(0.12, 0.24)
-		particles.append({
-			"kind": "fire", "burst": true, "seed": rng.randf_range(0.0, TAU), "pos": origin + Vector2.from_angle(rng.randf_range(0.0, TAU_F)) * rng.randf_range(0.0, 7.0),
-			"vel": Vector2.ZERO, "life": core_life, "max_life": core_life,
-			"size": rng.randf_range(16.0, 30.0) * explosion_scale, "growth": 34.0 * explosion_scale, "drag": 0.1, "color": Color(5.0, 2.2, 0.5),
-		})
+	effects._spawn_explosion(origin, color, count, speed)
 
 
 func _update_particles(delta: float) -> void:
-	# Stable compaction preserves transparent draw order without shifting the
-	# remaining array for every expired particle. This pass never spawns particles.
-	var alive := 0
-	for i in range(particles.size()):
-		var particle := particles[i]
-		var previous: Vector2 = particle["pos"]
-		particle["life"] -= delta
-		if particle["kind"] == "ember":
-			FireVisual.advance_fragment(particle)
-			FireVisual.update_trail(particle, previous, delta)
-		else:
-			var velocity: Vector2 = particle["vel"]
-			if velocity != Vector2.ZERO:
-				particle["pos"] += velocity * delta
-				particle["vel"] = velocity * pow(particle["drag"], delta)
-			var source: Dictionary = particle.get("source", {})
-			if not source.is_empty():
-				var age: float = particle["max_life"] - particle["life"]
-				if age < 0.28 and enemies.has(source):
-					particle["pos"] += source["pos"] - particle["source_pos"]
-					particle["source_pos"] = source["pos"]
-				else:
-					particle["source"] = {}
-		particle["size"] = maxf(0.1, particle["size"] + particle["growth"] * delta)
-		if particle["life"] <= 0.0 and particle["kind"] == "ember":
-			# Keep the sampled smoke path after the hot fragment has gone.
-			# Include overshoot so a long update cannot resurrect expired effects.
-			particle["kind"] = "ember_wake"
-			particle["smoke_age"] = particle["max_life"]
-			particle["life"] += 0.55
-			particle["max_life"] = 0.55
-			particle["vel"] = Vector2.ZERO
-			particle["growth"] = 5.0
-		if particle["life"] > 0.0:
-			if alive != i:
-				particles[alive] = particle
-			alive += 1
-	particles.resize(alive)
+	effects._update_particles(delta, enemies)
 
 
 func _update_shockwaves(delta: float) -> void:
-	for i in range(shockwaves.size() - 1, -1, -1):
-		var ring := shockwaves[i]
-		ring["life"] -= delta
-		ring["radius"] = lerpf(ring["radius"], ring["max"], 1.0 - exp(-delta * 8.0))
-		if ring["life"] <= 0.0:
-			shockwaves.remove_at(i)
+	effects._update_shockwaves(delta)
 
 
 func _check_wave_complete() -> void:
@@ -1418,195 +1219,54 @@ func _enemy_color(kind: String) -> Color:
 
 
 func _draw_ui(canvas: Node2D) -> void:
-	match state:
-		GameState.TITLE:
-			_draw_title(canvas)
-		GameState.PLAYING:
-			_draw_hud(canvas)
-			if paused:
-				_draw_pause(canvas)
-		GameState.GAME_OVER:
-			_draw_hud(canvas)
-			_draw_end_panel(canvas, false)
-		GameState.VICTORY:
-			_draw_hud(canvas)
-			_draw_end_panel(canvas, true)
-
-
-func _draw_title(canvas: Node2D) -> void:
-	var center := Vector2(screen_size.x * 0.5, screen_size.y * 0.36)
-	for i in range(5, 0, -1):
-		canvas.draw_arc(center, 72.0 + float(i) * 18.0 + sin(Time.get_ticks_msec() * 0.001 + i) * 6.0, -1.1, 4.2, 56, Color(0.15, 0.65, 1.0, 0.05 * i), 3.0)
-	_draw_centered(canvas, "STARFALL", center.y - 14.0, 58, Color(0.78, 0.95, 1.0))
-	_draw_centered(canvas, "PROTOCOL", center.y + 40.0, 30, Color(0.24, 0.82, 1.0))
-	_draw_centered(canvas, "A ONE-MISSION BULLET HELL", center.y + 84.0, 15, Color(0.62, 0.7, 0.87))
-	var panel := Rect2(Vector2(screen_size.x * 0.13, screen_size.y * 0.57), Vector2(screen_size.x * 0.74, 190.0))
-	canvas.draw_rect(panel, Color(0.025, 0.04, 0.11, 0.86), true)
-	canvas.draw_rect(panel, Color(0.2, 0.68, 1.0, 0.36), false, 2.0)
-	_draw_centered(canvas, "DRAG / WASD / LEFT STICK TO MOVE", panel.position.y + 43.0, 17, Color(0.82, 0.9, 1.0))
-	_draw_centered(canvas, "HOLD PULSE  •  SPACE / LB", panel.position.y + 79.0, 16, Color(0.28, 0.9, 1.0))
-	_draw_centered(canvas, "TRIGGER NOVA  •  E / RB", panel.position.y + 112.0, 16, Color(1.0, 0.67, 0.24))
-	_draw_centered(canvas, "AUTO FIRE · V: SWITCH WEAPON", panel.position.y + 153.0, 15, Color(0.58, 0.65, 0.79))
-	var pulse := 0.72 + sin(Time.get_ticks_msec() * 0.004) * 0.2
-	_draw_centered(canvas, "F2  /  HEAVY ENCOUNTER", screen_size.y * 0.89, 16, Color(0.65, 0.8, 0.92))
-	_draw_centered(canvas, "CLICK OR TAP TO LAUNCH", screen_size.y * 0.83, 22, Color(0.76, 0.94, 1.0, pulse))
-
-
-func _draw_hud(canvas: Node2D) -> void:
-	_draw_centered(canvas, "TWIN SHOTS · V" if twin_shots else "LANCE · V", screen_size.y - 32, 12, Color(0.45, 0.72, 0.9))
-	canvas.draw_rect(Rect2(Vector2.ZERO, Vector2(screen_size.x, 86.0)), Color(0.006, 0.012, 0.04, 0.72))
-	_draw_text(canvas, "SCORE", Vector2(22.0, 27.0), 13, Color(0.42, 0.56, 0.75))
-	_draw_text(canvas, _format_score(score), Vector2(22.0, 57.0), 25, Color(0.9, 0.97, 1.0))
-	_draw_centered(canvas, "TURRET TRIAL" if encounter_preview else "WAVE %d/4" % mini(wave, 4), 27.0, 16, Color(0.52, 0.82, 1.0))
-	_draw_centered(canvas, "%02d:%05.2f" % [int(elapsed / 60.0), fmod(elapsed, 60.0)], 52.0, 17, Color(0.85, 0.93, 1.0))
-	for step in range(4):
-		var c := Color(0.15, 0.8, 1.0) if step < wave else Color(0.16, 0.21, 0.3)
-		canvas.draw_line(Vector2(screen_size.x * 0.5 - 42 + step * 22, 70), Vector2(screen_size.x * 0.5 - 26 + step * 22, 70), c, 3.0)
-
-	_draw_text(canvas, "HULL", Vector2(screen_size.x - 105.0, 27.0), 13, Color(0.42, 0.56, 0.75))
-	for i in range(3):
-		var c := Color(0.25, 0.9, 1.0) if i < player_hp else Color(0.16, 0.2, 0.29)
-		canvas.draw_circle(Vector2(screen_size.x - 91.0 + i * 28.0, 55.0), 8.0, c)
-
-	if wave == 4 and not enemies.is_empty():
-		for enemy in enemies:
-			if enemy["kind"] == "boss":
-				var bar_rect := Rect2(Vector2(80.0, 101.0), Vector2(screen_size.x - 160.0, 12.0))
-				canvas.draw_rect(bar_rect, Color(0.11, 0.03, 0.13, 0.8))
-				canvas.draw_rect(Rect2(bar_rect.position, Vector2(bar_rect.size.x * maxf(0.0, enemy["hp"] / enemy["max_hp"]), bar_rect.size.y)), Color(1.0, 0.17, 0.54))
-				_draw_centered(canvas, "DREADNOUGHT", 96.0, 12, Color(1.0, 0.65, 0.82))
-				break
-
-	var pause_rect := _pause_button_rect()
-	canvas.draw_rect(pause_rect, Color(0.02, 0.05, 0.09, 0.85))
-	_draw_text(canvas, "II", pause_rect.position + Vector2(17, 29), 22, Color(0.75, 0.9, 1.0))
-	_draw_ability_button(canvas, _aura_button_rect(), "PULSE", aura_energy / MAX_AURA, Color(0.15, 0.76, 1.0), aura_active)
-	_draw_ability_button(canvas, _nova_button_rect(), "NOVA", nova_energy / MAX_NOVA, Color(1.0, 0.52, 0.14), nova_energy >= MAX_NOVA)
-	if aura_exhausted:
-		_draw_text(canvas, "RECHARGING", Vector2(20, screen_size.y - 135), 12, Color(0.4, 0.75, 0.9))
-	if encounter_preview:
-		_draw_centered(canvas, "BREAK SHIELD · AIM AT SIDE TURRETS", 119.0, 14, Color(0.55, 0.85, 1.0))
-		_draw_centered(canvas, "PULSE CLEARS BULLETS · DODGE LASERS", 145.0, 12, Color(0.85, 0.65, 0.42))
-	if wave_banner > 0.0:
-		var title := "FINAL WAVE" if wave == 4 else "WAVE %d" % wave
-		var subtitle: String = "DREADNOUGHT INBOUND" if wave == 4 else ["", "FIRST CONTACT", "CROSSFIRE", "BREAK THE LINE"][wave]
-		var alpha := minf(1.0, wave_banner * 1.4)
-		_draw_centered(canvas, title, screen_size.y * 0.19, 28, Color(0.82, 0.95, 1.0, alpha))
-		_draw_centered(canvas, subtitle, screen_size.y * 0.19 + 28.0, 13, Color(0.34, 0.78, 1.0, alpha))
-
-
-func _draw_ability_button(canvas: Node2D, rect: Rect2, label: String, fill: float, color: Color, active: bool) -> void:
-	var center := rect.get_center()
-	var radius := rect.size.x * 0.5
-	canvas.draw_circle(center, radius, Color(0.015, 0.03, 0.08, 0.78))
-	canvas.draw_arc(center, radius - 4.0, -PI * 0.5, -PI * 0.5 + TAU_F * clampf(fill, 0.0, 1.0), 40, color, 6.0)
-	if active:
-		canvas.draw_circle(center, radius - 10.0, Color(color.r, color.g, color.b, 0.16))
-	var size := 15
-	var text_width := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
-	canvas.draw_string(font, center + Vector2(-text_width * 0.5, 5.0), label, HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(0.88, 0.96, 1.0))
-
-
-func _draw_pause(canvas: Node2D) -> void:
-	canvas.draw_rect(Rect2(Vector2.ZERO, screen_size), Color(0.0, 0.01, 0.04, 0.76))
-	_draw_centered(canvas, "PAUSED", screen_size.y * 0.46, 44, Color(0.78, 0.94, 1.0))
-	_draw_centered(canvas, "Press Esc or tap to resume", screen_size.y * 0.51, 17, Color(0.55, 0.68, 0.86))
-
-
-func _draw_end_panel(canvas: Node2D, victory: bool) -> void:
-	canvas.draw_rect(Rect2(Vector2.ZERO, screen_size), Color(0.0, 0.008, 0.03, 0.7))
-	var panel := Rect2(Vector2(screen_size.x * 0.11, screen_size.y * 0.28), Vector2(screen_size.x * 0.78, 420.0))
-	canvas.draw_rect(panel, Color(0.02, 0.035, 0.09, 0.96), true)
-	canvas.draw_rect(panel, Color(0.24, 0.8, 1.0, 0.45) if victory else Color(1.0, 0.22, 0.38, 0.5), false, 3.0)
-	_draw_centered(canvas, "MISSION COMPLETE" if victory else "SHIP LOST", panel.position.y + 76.0, 34, Color(0.64, 0.94, 1.0) if victory else Color(1.0, 0.5, 0.58))
-	_draw_centered(canvas, _format_score(score), panel.position.y + 144.0, 44, Color.WHITE)
-	_draw_centered(canvas, "FINAL SCORE", panel.position.y + 173.0, 13, Color(0.45, 0.56, 0.75))
-	_draw_centered(canvas, "GRAZES  %03d" % graze_count, panel.position.y + 226.0, 18, Color(0.7, 0.79, 0.92))
-	_draw_centered(canvas, "TIME  %02d:%02d" % [int(elapsed / 60.0), int(elapsed) % 60], panel.position.y + 261.0, 18, Color(0.7, 0.79, 0.92))
-	_draw_centered(canvas, "CLICK / TAP / ENTER TO RETRY", panel.position.y + 351.0, 17, Color(0.35, 0.84, 1.0))
-
-
-func _draw_text(canvas: Node2D, text: String, pos: Vector2, size: int, color: Color) -> void:
-	canvas.draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
-
-
-func _draw_centered(canvas: Node2D, text: String, y: float, size: int, color: Color) -> void:
-	var width := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
-	canvas.draw_string(font, Vector2((screen_size.x - width) * 0.5, y), text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
+	hud.state = state
+	hud.screen_size = screen_size
+	hud.font = font
+	hud.paused = paused
+	hud.twin_shots = twin_shots
+	hud.score = score
+	hud.encounter_preview = encounter_preview
+	hud.wave = wave
+	hud.elapsed = elapsed
+	hud.player_hp = player_hp
+	hud.enemies = enemies
+	hud.aura_energy = aura_energy
+	hud.aura_active = aura_active
+	hud.nova_energy = nova_energy
+	hud.aura_exhausted = aura_exhausted
+	hud.wave_banner = wave_banner
+	hud.graze_count = graze_count
+	hud._draw_ui(canvas)
 
 
 func _format_score(value: int) -> String:
-	var raw := str(maxi(value, 0))
-	var output := ""
-	var count := 0
-	for i in range(raw.length() - 1, -1, -1):
-		if count > 0 and count % 3 == 0:
-			output = "," + output
-		output = raw.substr(i, 1) + output
-		count += 1
-	return output
+	return hud._format_score(value)
 
 
 func _aura_button_rect() -> Rect2:
-	return Rect2(Vector2(24.0, screen_size.y - 122.0), Vector2(92.0, 92.0))
+	hud.screen_size = screen_size
+	return hud._aura_button_rect()
 
 
 func _nova_button_rect() -> Rect2:
-	return Rect2(Vector2(screen_size.x - 116.0, screen_size.y - 122.0), Vector2(92.0, 92.0))
+	hud.screen_size = screen_size
+	return hud._nova_button_rect()
+
+
 
 
 func _build_audio() -> void:
-	sounds["shield_break"] = _make_tone(1200.0, 180.0, 0.3, 0.2, 2)
-	sounds["turret_down"] = _make_tone(210.0, 60.0, 0.22, 0.2, 2)
-	sounds["laser"] = _make_tone(170.0, 650.0, 0.5, 0.13, 1)
-	sounds["dart"] = _make_tone(800.0, 280.0, 0.09, 0.10, 2)
-	sounds["start"] = _make_tone(420.0, 720.0, 0.23, 0.24, 0)
-	sounds["explode"] = _make_tone(150.0, 48.0, 0.18, 0.2, 2)
-	sounds["hit"] = _make_tone(110.0, 34.0, 0.34, 0.32, 2)
-	sounds["warning"] = _make_tone(240.0, 180.0, 0.52, 0.25, 1)
-	sounds["nova"] = _make_tone(180.0, 860.0, 0.62, 0.34, 0)
-	sounds["boss_down"] = _make_tone(360.0, 52.0, 0.9, 0.38, 2)
-	for i in range(8):
-		var player := AudioStreamPlayer.new()
-		player.volume_db = -5.0
-		add_child(player)
-		sound_pool.append(player)
+	audio.rng = rng
+	add_child(audio)
+	audio._build_audio()
 
 
 func _make_tone(start_hz: float, end_hz: float, duration: float, volume: float, waveform: int) -> AudioStreamWAV:
-	var mix_rate := 22050
-	var sample_count := int(duration * mix_rate)
-	var data := PackedByteArray()
-	data.resize(sample_count * 2)
-	var phase := 0.0
-	for i in range(sample_count):
-		var t := float(i) / float(maxi(sample_count - 1, 1))
-		var hz := lerpf(start_hz, end_hz, t)
-		phase += TAU_F * hz / float(mix_rate)
-		var sample := sin(phase)
-		if waveform == 1:
-			sample = 1.0 if sample >= 0.0 else -1.0
-		elif waveform == 2:
-			sample = sin(phase) * 0.62 + rng.randf_range(-1.0, 1.0) * 0.38
-		var envelope := pow(1.0 - t, 2.2)
-		var value := int(clampf(sample * envelope * volume, -1.0, 1.0) * 32767.0)
-		data.encode_s16(i * 2, value)
-	var stream := AudioStreamWAV.new()
-	stream.format = AudioStreamWAV.FORMAT_16_BITS
-	stream.mix_rate = mix_rate
-	stream.stereo = false
-	stream.data = data
-	return stream
+	return audio._make_tone(start_hz, end_hz, duration, volume, waveform)
 
 
 func play_sound(sound_name: String) -> void:
-	if not sounds.has(sound_name) or sound_pool.is_empty():
-		return
-	var player := sound_pool[sound_cursor]
-	sound_cursor = (sound_cursor + 1) % sound_pool.size()
-	player.stop()
-	player.stream = sounds[sound_name]
-	player.play()
+	audio.play_sound(sound_name)
 
 
 func start_encounter_preview() -> void:
@@ -1641,8 +1301,8 @@ func _update_wrecks(delta: float) -> void:
 
 
 func _pause_button_rect() -> Rect2:
-	return Rect2(Vector2(screen_size.x - 62.0, 96.0), Vector2(44.0, 44.0))
-
+	hud.screen_size = screen_size
+	return hud._pause_button_rect()
 
 
 func _restart_selected_mode() -> void:

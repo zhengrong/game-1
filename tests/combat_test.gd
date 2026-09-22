@@ -19,7 +19,7 @@ func run() -> void:
 	game.start_encounter_preview()
 	var enemy: Dictionary = game.enemies[0]
 	var hp: float = enemy["hp"]
-	Heavy.damage(game, enemy, 102.0, enemy["pos"], 1)
+	game._damage_heavy(enemy, 102.0, enemy["pos"], 1)
 	check(enemy["shield"] == 0.0 and enemy["hp"] == hp, "Shield must absorb the breaking hit without hurting hull")
 	check(enemy["turrets"][1]["hp"] == 85.0, "Shield must protect turret health")
 	game.player_pos.x = enemy["pos"].x + 43.0
@@ -42,7 +42,7 @@ func run() -> void:
 	game.player_pos = locked_origin + Vector2.from_angle(locked_angle) * 200.0
 	Heavy.update(game, enemy, 0.01)
 	check(game.player_hp == 2, "Active laser must damage within its displayed path")
-	Heavy.damage(game, enemy, 85.0, enemy["pos"] + laser["offset"], 1)
+	game._damage_heavy(enemy, 85.0, enemy["pos"] + laser["offset"], 1)
 	check(laser["state"] == "destroyed" and enemy["hp"] == hp, "Turret destruction must preserve carrier hull")
 	game.player_invulnerable = 0.0
 	Heavy.update(game, enemy, 0.1)

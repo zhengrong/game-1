@@ -4,7 +4,6 @@ const LIGHT = preload("res://combat/flare_texture.tres")
 var game: Node2D
 
 func _ready() -> void:
-	game = get_parent()
 	var additive := CanvasItemMaterial.new()
 	additive.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
 	material = additive
