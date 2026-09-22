@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Electrical lance — visual review</title>
+<style>
+body{margin:0;padding:28px;background:#080e16;color:#d9e7f3;font:16px system-ui;max-width:1300px;margin:auto}
+h1{font-size:26px}p{max-width:850px;line-height:1.6;color:#b8c9d9}a{color:#74d9ff}
+.frames{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}figure{margin:0}img{width:100%;border:1px solid #263b50;border-radius:8px}figcaption{padding:10px 0}
+.motion{display:flex;gap:24px;align-items:flex-start;margin-top:32px}.motion img{width:min(48vw,380px)}button{padding:10px 22px;font:inherit;background:#7bdefb;border:0;border-radius:6px;cursor:pointer}input{width:min(360px,40vw);display:block;margin:24px 0}output{display:block;font-variant-numeric:tabular-nums}
+@media(max-width:650px){.frames{grid-template-columns:repeat(2,1fr)}body{padding:16px}}
+</style>
+<h1>Electrical lance — complete firing cycle</h1>
+<p>Deterministic Godot capture at 589 × 1280, stepped at 120 Hz. Review shape, contact placement and collapse across the entire cycle. These captures verify our renderer; they do not establish pixel-identical reference matching or device frame pacing.</p>
+<p>Reference: <a href="https://store.steampowered.com/app/2678070/Phoenix_2/">Phoenix 2 — “Different ships, different weapons”</a>, electrical lance around 47–52 seconds. The linked microtrailer in the repository has the earlier sampled timing notes.</p>
+<div class="frames">
+<figure><img src="../visual-reports/beam-cycle/frame-003.png" alt="Attack at 25 milliseconds"><figcaption>Attack · 25 ms</figcaption></figure>
+<figure><img src="../visual-reports/beam-cycle/frame-012.png" alt="Sustain at 100 milliseconds"><figcaption>Sustain · 100 ms</figcaption></figure>
+<figure><img src="../visual-reports/beam-cycle/frame-030.png" alt="Thin residual line at 250 milliseconds"><figcaption>Residual · 250 ms</figcaption></figure>
+<figure><img src="../visual-reports/beam-cycle/frame-040.png" alt="Recovery with no beam at 333 milliseconds"><figcaption>Recovery · 333 ms</figcaption></figure>
+</div>
+<div class="motion"><img id="movie" src="../visual-reports/beam-cycle/frame-000.png" alt="Scrubbable beam cycle"><div><h2>Motion and frame inspection</h2><button id="play">Play cycle</button><input id="seek" type="range" min="0" max="48" value="0" aria-label="Capture frame"><output id="frame">Frame 0 · 0 ms</output><p>The browser chooses displayed frames according to elapsed time. Use the slider to inspect individual captured frames.</p><p>Look for attached open feathers, an expanded attack fan, blue-white contact with warm fragments, collapse before recovery, and complete disappearance between shots.</p></div></div>
+<script>
+const movie=document.querySelector('#movie'),seek=document.querySelector('#seek'),label=document.querySelector('#frame'),play=document.querySelector('#play');
+const frames=Array.from({length:49},(_,i)=>{const im=new Image();im.src=`../visual-reports/beam-cycle/frame-${String(i).padStart(3,'0')}.png`;return im;});
+let running=false,start=0,last=-1;
+function show(i){movie.src=frames[i].src;seek.value=i;label.textContent=`Frame ${i} · ${Math.round(i/120*1000)} ms`;}
+seek.oninput=()=>{running=false;play.textContent='Play cycle';show(+seek.value);};
+play.onclick=()=>{running=!running;start=performance.now()-(+seek.value)/120*1000;play.textContent=running?'Pause':'Play cycle';};
+function update(now){if(running){const i=Math.floor((now-start)/1000*120)%49;if(i!==last){show(i);last=i;}}requestAnimationFrame(update);}requestAnimationFrame(update);
+</script>
+</html>

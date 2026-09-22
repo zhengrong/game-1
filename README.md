@@ -13,7 +13,7 @@ Open `project.godot` in Godot and press **F6/F5**, or run the project from the e
 - Heavy-enemy trial: F2, or click/tap the trial entry at the bottom of the title screen
 - Return to title: F1
 - Controller: A/Start launches or retries; Start pauses/resumes
-- Weapons fire automatically
+- Weapons fire automatically; press **V** to switch between the electrical lance and twin blue shots
 
 Pulse consumes cyan energy and destroys nearby hostile projectiles. Grazing shots, destroying enemies, and collecting energy shards charge the orange Nova. Nova clears the screen and damages every enemy.
 
@@ -29,7 +29,11 @@ Spinner enemies also launch pink missiles that announce their arming state befor
 
 F2 starts an isolated heavy encounter with a stronger hull so there is time to inspect and disable both turrets. Retrying preserves this trial. You can also launch with `-- --encounter` after Godot's project arguments.
 
+Weapon energy uses an additive layer above hulls and below hostile threats and the HUD. The lance has open moving feathers, a directional muzzle fan, a radial contact bloom, and a contracting blue residual. Hull impacts shed orange fire and hot fragments. Shield breaks add blue-white energy bursts; Nova adds a growing pink-white core with radial rays and a translucent shell. Explosions combine a 65 ms ignition glow, optical streaks fading over 0.22 seconds, and a translucent expanding shell lasting 0.42 seconds. See [the reference review](BEAM_VISUAL_REVIEW.md) for evidence, remaining acceptance gaps, and the full-cycle capture command.
+
 ### Validation
+
+Fire uses an age-driven procedural shader with hot cores, orange edges and cooling smoke. Damaged hulls and destroyed mounts emit flames that initially follow the moving source, then detach. Burning fragments follow curved, slowing trajectories and leave a sampled, tapering trail along their path. Trails keep at most 12 points and sample at a fixed interval. After the fragment cools, its smoke path expands and fades for up to another 550 ms. Fire light draws below hostile bullets and the HUD. To capture every frame of the three-second effects fixture, run `godot --path . --audio-driver Dummy --script tests/capture_fire.gd`; 181 images and a timing manifest are saved under `visual-reports/fire/`. Open `tools/fire_review.html` to pair these with local reference images. See [fire frame matching](FIRE_FRAME_MATCH.md) for the uploaded reference, exact-timestamp capture commands, and remaining visual gaps; a full match has not been verified.
 
 For the automated GUT suite and enforced **95% executable-line coverage** gate, use Python 3.12 and Godot 4.7.2:
 

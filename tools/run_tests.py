@@ -13,7 +13,7 @@ from gd_tools.coverage.reporter import generate_report, read_coverage_json
 
 
 ROOT = Path(__file__).resolve().parents[1]
-GENERATED = {".git", ".godot", ".gd-tools", ".venv-test", "coverage", "__pycache__"}
+GENERATED = {".git", ".godot", ".gd-tools", ".venv-test", "coverage", "visual-reports", "__pycache__"}
 TEST_ADDONS = {"gut", "gd-tools-coverage"}
 
 
@@ -60,6 +60,9 @@ def main():
                 print(result.stdout, end="", flush=True)
                 log.write(result.stdout)
                 log.flush()
+                if "SCRIPT ERROR:" in result.stdout or "SHADER ERROR:" in result.stdout:
+                    print("Godot reported a script/shader error; rejecting this run even if GUT passed.", flush=True)
+                    return result.returncode or 1
                 return result.returncode
 
             code = run([str(executable), "init", "--non-interactive"])

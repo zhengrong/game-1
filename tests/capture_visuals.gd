@@ -39,6 +39,14 @@ func capture() -> void:
 	await save_frame(game, "turret-destroyed-release")
 	game.beam_visible_timer = 0.0
 	await save_frame(game, "recovery")
+	game.beam_visible_timer = 0.19
+	game.beam_age = 0.03
+	game.muzzle_flash = 0.05
+	game._update_beam_visual(0.01)
+	game._spawn_explosion(Vector2(180, 470), Color.ORANGE, 24, 220.0)
+	await save_frame(game, "flare-ignition")
+	game._update_particles(0.11)
+	await save_frame(game, "flare-decay")
 	print("Visual captures saved to /tmp/starfall-captures")
 	game.queue_free()
 	await process_frame
@@ -47,6 +55,7 @@ func capture() -> void:
 
 func save_frame(game, label: String) -> void:
 	game.queue_redraw()
+	await process_frame
 	await process_frame
 	await RenderingServer.frame_post_draw
 	var img := root.get_texture().get_image()

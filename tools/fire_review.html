@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fire — paired frame review</title>
+<style>
+body{background:#10151c;color:#e5edf6;font:16px system-ui;margin:24px auto;padding:0 20px;max-width:1200px}p{line-height:1.5;max-width:900px}label{display:inline-block;margin:8px 18px 8px 0}button,input{font:inherit}input[type=number]{width:80px}input[type=range]{width:100%}.pair{display:grid;grid-template-columns:1fr 1fr;gap:20px}figure{margin:0}img{display:block;width:100%;height:65vh;object-fit:contain;background:#06090d}figcaption{padding:10px 0}output{display:block;margin:12px 0;color:#f5c76a}button{padding:8px 14px}a{color:#87d7ff}
+</style>
+<h1>Fire — paired frame review</h1>
+<p><a href="../visual-reports/fire-reference/review.html">Open the uploaded video's exact-timestamp comparison</a> after running the reference capture and <code>tools/build_fire_review.py</code>. The controls below are for the older fixed-60-Hz baseline.</p>
+<p>Our capture contains every simulation frame at 60 Hz. Load consecutive, numbered reference images from the existing Phoenix 2 weapons clip. Files are sorted by filename. Images stay local in this browser. No reference is bundled and no match is certified.</p>
+<label>Reference frames <input id="files" type="file" accept="image/png,image/jpeg,image/webp" multiple></label>
+<label>Reference FPS <input id="fps" type="number" min="1" max="240" step="0.001" value="60"></label>
+<label>Reference ignition index <input id="offset" type="number" min="0" step="1" value="0"></label>
+<p>Set the ignition index to the first reference frame where the selected explosion starts. Frame 0 on our side is explosion creation. For exact one-to-one review, source and capture must have the same frame rate; otherwise the viewer shows the nearest source frame and its timing error. This fixture is a baseline, not yet the reference encounter.</p>
+<button id="previous">Previous frame</button> <button id="next">Next frame</button>
+<input id="seek" type="range" min="0" max="180" value="0" aria-label="Our simulation frame">
+<output id="status" aria-live="polite"></output>
+<div class="pair">
+<figure><img id="reference" alt="Load reference frames to begin"><figcaption id="referenceLabel">Reference missing</figcaption></figure>
+<figure><img id="ours" alt="Current game fire capture"><figcaption id="ourLabel"></figcaption></figure>
+</div>
+<p>Inspect ignition, peak fireball size, flame shape, bright-core area, orange falloff, debris motion, smoke, and disappearance. Judge effect crops at a common scale; different ships and backgrounds make whole-frame pixel scores misleading.</p>
+<script>
+const el=id=>document.getElementById(id);
+let sources=[];
+function show(){
+  const frame=Number(el('seek').value), fps=Number(el('fps').value), offset=Number(el('offset').value);
+  el('ours').src=`../visual-reports/fire/frame-${String(frame).padStart(3,'0')}.png`;
+  el('ourLabel').textContent=`Our frame ${frame} · ${(frame/60*1000).toFixed(2)} ms`;
+  if(!Number.isFinite(fps)||fps<=0||!Number.isInteger(offset)||offset<0){el('status').textContent='Enter a positive reference FPS and a nonnegative integer ignition index.';el('reference').removeAttribute('src');return;}
+  const index=offset+Math.round(frame/60*fps), source=sources[index];
+  if(!source){el('reference').removeAttribute('src');el('referenceLabel').textContent='No reference frame at this index';el('status').textContent=sources.length?'Outside the loaded reference sequence.':'Waiting for reference images — comparison unavailable.';return;}
+  el('reference').src=source.url;
+  el('referenceLabel').textContent=`${source.name} · index ${index} · ${((index-offset)/fps*1000).toFixed(2)} ms`;
+  const error=((index-offset)/fps-frame/60)*1000;
+  el('status').textContent=`${fps===60?'One-to-one frame pairing':'Nearest-frame pairing; FPS differs'} · timing error ${error.toFixed(2)} ms · visual match unverified`;
+}
+el('files').onchange=()=>{sources.forEach(s=>URL.revokeObjectURL(s.url));sources=Array.from(el('files').files).sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true})).map(f=>({name:f.name,url:URL.createObjectURL(f)}));show();};
+['seek','fps','offset'].forEach(id=>el(id).oninput=show);
+function step(n){el('seek').value=Math.max(0,Math.min(180,Number(el('seek').value)+n));show();}
+el('previous').onclick=()=>step(-1);el('next').onclick=()=>step(1);
+document.addEventListener('keydown',event=>{if(['INPUT','BUTTON'].includes(event.target.tagName))return;if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();step(event.key==='ArrowLeft'?-1:1);}});
+el('ours').onerror=()=>{el('status').textContent='Game capture missing. Run tests/capture_fire.gd first.';};
+show();
+</script>
+</html>

@@ -39,6 +39,7 @@ static func damage(game, enemy: Dictionary, amount: float, point: Vector2, part:
 		enemy["shield_hit"] = (point - Vector2(enemy["pos"])).normalized()
 		game._spawn_sparks(point, Color(0.25, 1.4, 2.6), 4, 110.0)
 		if enemy["shield"] <= 0.0:
+			game._spawn_energy_burst(enemy["pos"], Color(0.2, 0.85, 1.8), 0.75)
 			enemy["shield_break"] = 0.65
 			game.shockwaves.append({"pos": enemy["pos"], "radius": SHIELD_RADIUS, "max": 135.0, "life": 0.45, "color": Color(0.2, 0.8, 1.0)})
 			game.play_sound("shield_break")
@@ -69,7 +70,7 @@ static func update(game, enemy: Dictionary, delta: float) -> void:
 		if turret["hp"] <= 0.0:
 			turret["burn"] -= delta
 			if turret["burn"] <= 0.0:
-				game._spawn_damage_fire(mount, 0.38)
+				game._spawn_damage_fire(mount, 0.55, enemy)
 				turret["burn"] = 0.3
 			continue
 		# Do not attack from outside the viewport during the entrance.

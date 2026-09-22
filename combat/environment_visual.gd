@@ -1,6 +1,6 @@
 extends RefCounted
 ## Peripheral industrial geometry; the center remains clear for combat.
-static func draw_layers(game) -> void:
+static func draw_layers(game, canvas: Node2D) -> void:
 	var size: Vector2 = game.screen_size
 	var time: float = game.elapsed
 	for layer in range(2):
@@ -14,8 +14,8 @@ static func draw_layers(game) -> void:
 				var x: float = 0.0 if side < 0.0 else size.x
 				var inward: float = -side
 				var shape := PackedVector2Array([Vector2(x, y - 130), Vector2(x + inward * depth * 0.6, y - 95), Vector2(x + inward * depth, y - 25), Vector2(x + inward * depth, y + 70), Vector2(x + inward * depth * 0.35, y + 118), Vector2(x, y + 145)])
-				game.draw_colored_polygon(shape, Color(0.022, 0.035, 0.044, 0.72 if layer == 0 else 0.94))
-				game.draw_polyline(shape, Color(0.16, 0.23, 0.25, 0.45), 2.0, true)
-				game.draw_line(Vector2(x + inward * depth, y - 20), Vector2(x + inward * depth, y + 45), Color(0.25, 0.68, 0.73, 0.35), 2.0, true)
+				canvas.draw_colored_polygon(shape, Color(0.022, 0.035, 0.044, 0.72 if layer == 0 else 0.94))
+				canvas.draw_polyline(shape, Color(0.16, 0.23, 0.25, 0.45), 2.0, true)
+				canvas.draw_line(Vector2(x + inward * depth, y - 20), Vector2(x + inward * depth, y + 45), Color(0.25, 0.68, 0.73, 0.35), 2.0, true)
 				for light in range(3):
-					game.draw_circle(Vector2(x + inward * depth * 0.55, y + light * 13.0), 2.0, Color(1.2, 0.6, 0.12, 0.65))
+					canvas.draw_circle(Vector2(x + inward * depth * 0.55, y + light * 13.0), 2.0, Color(1.2, 0.6, 0.12, 0.65))

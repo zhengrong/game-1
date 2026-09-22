@@ -6,5 +6,7 @@
 .venv-test/
 .gd-tools/
 coverage/
+visual-reports/
 addons/gut/
 addons/gd-tools-coverage/
+__pycache__/

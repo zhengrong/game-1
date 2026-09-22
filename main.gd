@@ -7,13 +7,14 @@ const Missile = preload("res://combat/missile.gd")
 const EnvironmentVisual = preload("res://combat/environment_visual.gd")
 const BeamVisual = preload("res://combat/beam_visual.gd")
 const HeavyEnemy = preload("res://combat/heavy_enemy.gd")
+const FireVisual = preload("res://combat/fire_visual.gd")
 
 enum GameState { TITLE, PLAYING, GAME_OVER, VICTORY }
 
 const PLAYER_RADIUS := 11.0
 const PLAYER_SPEED := 680.0
 const PLAYER_SHOT_INTERVAL := 0.066
-const PLAYER_BEAM_FIRE_TIME := 0.22
+const PLAYER_BEAM_FIRE_TIME := 0.27
 const PLAYER_BEAM_PAUSE_TIME := 0.135
 const PLAYER_BEAM_ATTACK_TIME := 0.07
 const PLAYFIELD_MARGIN := 30.0
@@ -39,6 +40,8 @@ const SMOKE_TEXTURE: Texture2D = preload("res://assets/effects/smoke.png")
 const BATTLEFIELD_BACKGROUND: Texture2D = preload("res://assets/backgrounds/amber_megastructure_hd.png")
 
 var state: GameState = GameState.TITLE
+var twin_shots := false
+var twin_timer := 0.0
 var screen_size := Vector2(720.0, 1280.0)
 var rng := RandomNumberGenerator.new()
 var font: Font
@@ -196,6 +199,7 @@ func start_game() -> void:
 	beam_age = 0.0
 	beam_damage_sequence = 0
 	thruster_timer = 0.0
+	twin_timer = 0.0
 	play_sound("start")
 
 
@@ -303,6 +307,16 @@ func _update_player(delta: float) -> void:
 
 
 func _update_player_weapon_cycle(delta: float) -> void:
+	if twin_shots:
+		var remaining := delta
+		while remaining > 0.000001:
+			var step := minf(remaining, twin_timer)
+			twin_timer -= step
+			remaining -= step
+			if twin_timer <= 0.000001:
+				_spawn_twin_shots(delta - remaining)
+				twin_timer = 0.28
+		return
 	# Consume the elapsed interval across shot and phase boundaries. Damage rate
 	# stays consistent at 30/60/120 FPS, including frames spanning recovery.
 	var remaining := delta
@@ -326,6 +340,13 @@ func _update_player_weapon_cycle(delta: float) -> void:
 			elif shot_timer <= 0.000001:
 				_fire_player_weapon()
 				shot_timer = PLAYER_SHOT_INTERVAL
+
+
+func _spawn_twin_shots(delay: float = 0.0) -> void:
+	for side in [-1.0, 1.0]:
+		player_bullets.append({"pos": player_pos + PLAYER_NOSE_OFFSET + Vector2(side * 22.0, 0),
+			"vel": Vector2(0, -2100), "radius": 8.0, "damage": 24.0,
+			"life": 1.2, "age": 0.0, "delay": delay, "overcharged": false, "style": "twin"})
 
 
 func _start_player_beam() -> void:
@@ -357,6 +378,8 @@ func _fire_player_weapon() -> void:
 			_spawn_player_impact(hit_pos, Vector2.UP, beam_overcharged)
 			if float(target.get("shield", 0.0)) <= 0.0:
 				_spawn_sparks(hit_pos, Color(2.0, 0.6, 0.08), 3, 110.0)
+				_spawn_damage_fire(hit_pos + Vector2(0, -7), 1.1 if beam_overcharged else 0.85)
+				_spawn_hot_fragments(hit_pos, 2, 170.0)
 		if target["hp"] <= 0.0:
 			_destroy_enemy(target_index)
 
@@ -542,9 +565,13 @@ func _update_enemies(delta: float) -> void:
 
 		var health_ratio: float = enemy["hp"] / enemy["max_hp"]
 		if health_ratio < 0.48 and enemy["damage_tick"] <= 0.0:
-			var vent_offset := Vector2(rng.randf_range(-enemy["radius"] * 0.55, enemy["radius"] * 0.55), rng.randf_range(-enemy["radius"] * 0.25, enemy["radius"] * 0.55))
-			_spawn_damage_fire(enemy["pos"] + vent_offset, 1.35 if kind == "boss" else 0.72)
-			enemy["damage_tick"] = rng.randf_range(0.045, 0.12) if kind == "boss" else rng.randf_range(0.12, 0.24)
+			# Stable hull vents sustain a joined burn rather than random isolated dots.
+			var severity := clampf((0.48 - health_ratio) / 0.48, 0.0, 1.0)
+			var burn_scale := lerpf(0.75, 1.35, severity) * (1.5 if kind == "boss" else 1.0)
+			for side in [-1.0, 1.0]:
+				var vent_offset := Vector2(side * enemy["radius"] * 0.24, -enemy["radius"] * 0.16)
+				_spawn_damage_fire(enemy["pos"] + vent_offset, burn_scale, enemy)
+			enemy["damage_tick"] = lerpf(0.13, 0.065, severity)
 
 		if enemy["pos"].y > screen_size.y + 150.0:
 			enemies.remove_at(i)
@@ -596,22 +623,45 @@ func _fire_radial(origin: Vector2, count: int, speed: float, rotation: float, co
 func _update_player_bullets(delta: float) -> void:
 	for i in range(player_bullets.size() - 1, -1, -1):
 		var bullet := player_bullets[i]
-		bullet["pos"] += bullet["vel"] * delta
-		bullet["life"] -= delta
-		bullet["age"] = float(bullet.get("age", 0.0)) + delta
-		var consumed := false
-		for j in range(enemies.size() - 1, -1, -1):
+		var delay: float = bullet.get("delay", 0.0)
+		var available := maxf(0.0, delta - delay)
+		bullet["delay"] = maxf(0.0, delay - delta)
+		if available <= 0.0:
+			continue
+		var step := minf(available, maxf(0.0, bullet["life"]))
+		var previous: Vector2 = bullet["pos"]
+		bullet["pos"] += bullet["vel"] * step
+		bullet["life"] -= available
+		bullet["age"] = float(bullet.get("age", 0.0)) + step
+		var nearest := 2.0
+		var target_index := -1
+		var target_part := -1
+		for j in range(enemies.size()):
 			var enemy := enemies[j]
-			var hit_radius: float = bullet["radius"] + enemy["radius"] * 0.72
-			if bullet["pos"].distance_squared_to(enemy["pos"]) <= hit_radius * hit_radius:
-				enemy["hp"] -= bullet["damage"]
-				enemy["hit_flash"] = minf(1.0, enemy["hit_flash"] + 0.42)
-				_spawn_player_impact(bullet["pos"], bullet["vel"], bullet["overcharged"])
-				consumed = true
-				if enemy["hp"] <= 0.0:
-					_destroy_enemy(j)
-				break
-		if consumed or bullet["life"] <= 0.0 or bullet["pos"].y < -35.0:
+			var surfaces: Array[Dictionary] = []
+			if enemy.has("turrets"):
+				surfaces = HeavyEnemy.surfaces(enemy)
+			else:
+				surfaces.append({"pos": enemy["pos"], "radius": enemy["radius"] * 0.72, "part": -1})
+			for surface in surfaces:
+				var radius: float = bullet["radius"] + surface["radius"]
+				var t := 0.0 if previous.distance_squared_to(surface["pos"]) <= radius * radius else Geometry2D.segment_intersects_circle(previous, bullet["pos"], surface["pos"], radius)
+				if t >= 0.0 and t < nearest:
+					nearest = t
+					target_index = j
+					target_part = surface["part"]
+		if target_index >= 0:
+			var target := enemies[target_index]
+			var contact := previous.lerp(bullet["pos"], nearest)
+			if target.has("turrets"):
+				HeavyEnemy.damage(self, target, bullet["damage"], contact, target_part)
+			else:
+				target["hp"] -= bullet["damage"]
+				target["hit_flash"] = minf(1.0, target["hit_flash"] + 0.42)
+			_spawn_player_impact(contact, bullet["vel"], bullet["overcharged"])
+			if target["hp"] <= 0.0:
+				_destroy_enemy(target_index)
+		if target_index >= 0 or bullet["life"] <= 0.0 or bullet["pos"].y < -35.0:
 			player_bullets.remove_at(i)
 
 
@@ -711,6 +761,7 @@ func _try_nova() -> void:
 	if nova_energy < MAX_NOVA or state != GameState.PLAYING:
 		return
 	nova_energy = 0.0
+	_spawn_energy_burst(player_pos, Color(1.5, 0.18, 0.9), 1.2)
 	flash = 0.9
 	shake = 20.0
 	shockwaves.append({"pos": player_pos, "radius": 18.0, "max": maxf(screen_size.x, screen_size.y) * 0.88, "life": 0.9, "color": Color(1.0, 0.58, 0.18)})
@@ -850,15 +901,18 @@ func _spawn_thruster(origin: Vector2, color: Color, scale: float) -> void:
 		})
 
 
-func _spawn_damage_fire(origin: Vector2, scale: float) -> void:
-	var fire_life := rng.randf_range(0.22, 0.48)
+func _spawn_damage_fire(origin: Vector2, scale: float, source: Dictionary = {}) -> void:
+	var fire_life := rng.randf_range(0.48, 0.75)
 	particles.append({
 		"kind": "fire",
+		"source": source,
+		"source_pos": source.get("pos", origin),
+		"seed": rng.randf_range(0.0, TAU),
 		"pos": origin,
-		"vel": Vector2(rng.randf_range(-24.0, 24.0), rng.randf_range(-105.0, -45.0)) * scale,
+		"vel": Vector2(rng.randf_range(-16.0, 16.0), rng.randf_range(-50.0, -22.0)) * scale,
 		"life": fire_life,
 		"max_life": fire_life,
-		"size": rng.randf_range(7.0, 14.0) * scale,
+		"size": rng.randf_range(11.0, 19.0) * scale,
 		"growth": rng.randf_range(7.0, 18.0) * scale,
 		"drag": 0.28,
 		"color": Color(3.2, 0.68, 0.08),
@@ -879,8 +933,50 @@ func _spawn_damage_fire(origin: Vector2, scale: float) -> void:
 	_spawn_sparks(origin, Color(2.8, 0.7, 0.1), 1, 120.0 * scale)
 
 
+func _spawn_hot_fragments(origin: Vector2, count: int, speed: float) -> void:
+	for i in range(count):
+		var life := rng.randf_range(0.65, 1.05)
+		var velocity := Vector2.from_angle(rng.randf_range(0.0, TAU)) * rng.randf_range(speed * 0.5, speed)
+		particles.append({
+			"kind": "ember", "pos": origin, "vel": velocity,
+			"origin": origin, "initial_velocity": velocity, "turn_rate": rng.randf_range(-1.6, 1.6),
+			"trail": PackedVector2Array([origin]), "trail_clock": 0.0,
+			"life": life, "max_life": life, "size": rng.randf_range(3.0, 6.0),
+			"growth": -1.5, "drag": 0.6, "color": Color(2.6, 0.8, 0.12),
+		})
+
+
+func _spawn_energy_burst(origin: Vector2, tint: Color, scale: float) -> void:
+	# Presentation only: no damage, bullet clearing, or random-number sampling.
+	var pink := tint.r > tint.b
+	var core_life := 1.4 if pink else 0.36
+	var ring_life := 1.5 if pink else 0.55
+	particles.append({"kind": "energy_burst", "pos": origin, "vel": Vector2.ZERO,
+		"life": core_life, "max_life": core_life, "size": scale, "growth": 0.0,
+		"drag": 1.0, "color": tint, "pink": pink})
+	particles.append({"kind": "energy_ring", "pos": origin, "vel": Vector2.ZERO,
+		"life": ring_life, "max_life": ring_life, "size": 72.0 * scale, "growth": 0.0,
+		"drag": 1.0, "color": tint, "palette": 1.0 if pink else 2.0})
+
+
 func _spawn_explosion(origin: Vector2, color: Color, count: int, speed: float) -> void:
 	var explosion_scale := clampf(speed / 180.0, 0.65, 1.8)
+	particles.append({
+		"kind": "blast_ring", "pos": origin, "vel": Vector2.ZERO,
+		"life": 0.42, "max_life": 0.42, "size": 60.0 * explosion_scale,
+		"growth": 0.0, "drag": 1.0, "color": Color.ORANGE,
+	})
+	_spawn_hot_fragments(origin, clampi(count / 3, 3, 10), speed * 1.2)
+	particles.append({
+		"kind": "ignition", "pos": origin, "vel": Vector2.ZERO,
+		"life": 0.065, "max_life": 0.065, "size": explosion_scale,
+		"growth": 0.0, "drag": 1.0, "color": Color.WHITE,
+	})
+	particles.append({
+		"kind": "flare", "pos": origin, "vel": Vector2.ZERO,
+		"life": 0.22, "max_life": 0.22, "size": explosion_scale * 1.45,
+		"growth": 0.0, "drag": 1.0, "color": Color(1.8, 0.65, 0.12),
+	})
 	for i in range(count):
 		var direction := Vector2.from_angle(rng.randf_range(0.0, TAU_F))
 		if i % 6 == 0:
@@ -894,7 +990,7 @@ func _spawn_explosion(origin: Vector2, color: Color, count: int, speed: float) -
 		elif i % 3 == 0:
 			var fire_life := rng.randf_range(0.28, 0.72)
 			particles.append({
-				"kind": "fire", "pos": origin + direction * rng.randf_range(0.0, 10.0),
+				"kind": "fire", "burst": true, "seed": rng.randf_range(0.0, TAU), "pos": origin + direction * rng.randf_range(0.0, 10.0),
 				"vel": direction * rng.randf_range(speed * 0.08, speed * 0.38),
 				"life": fire_life, "max_life": fire_life, "size": rng.randf_range(10.0, 24.0) * explosion_scale,
 				"growth": rng.randf_range(5.0, 18.0), "drag": 0.12, "color": Color(3.6, 0.58, 0.06),
@@ -904,14 +1000,14 @@ func _spawn_explosion(origin: Vector2, color: Color, count: int, speed: float) -
 			particles.append({
 				"kind": "spark", "pos": origin + direction * rng.randf_range(0.0, 12.0),
 				"vel": direction * rng.randf_range(speed * 0.18, speed),
-				"life": spark_life, "max_life": spark_life, "size": rng.randf_range(1.4, 5.5) * sqrt(explosion_scale),
+				"life": spark_life, "max_life": spark_life, "size": rng.randf_range(0.8, 2.8) * sqrt(explosion_scale),
 				"growth": -1.0, "drag": 0.08, "color": color.lightened(0.28),
 			})
 	# A compact white-hot ignition flash gives the explosion physical punch.
 	for i in range(4):
 		var core_life := rng.randf_range(0.12, 0.24)
 		particles.append({
-			"kind": "fire", "pos": origin + Vector2.from_angle(rng.randf_range(0.0, TAU_F)) * rng.randf_range(0.0, 7.0),
+			"kind": "fire", "burst": true, "seed": rng.randf_range(0.0, TAU), "pos": origin + Vector2.from_angle(rng.randf_range(0.0, TAU_F)) * rng.randf_range(0.0, 7.0),
 			"vel": Vector2.ZERO, "life": core_life, "max_life": core_life,
 			"size": rng.randf_range(16.0, 30.0) * explosion_scale, "growth": 34.0 * explosion_scale, "drag": 0.1, "color": Color(5.0, 2.2, 0.5),
 		})
@@ -920,10 +1016,32 @@ func _spawn_explosion(origin: Vector2, color: Color, count: int, speed: float) -
 func _update_particles(delta: float) -> void:
 	for i in range(particles.size() - 1, -1, -1):
 		var particle := particles[i]
+		var previous: Vector2 = particle["pos"]
 		particle["life"] -= delta
-		particle["pos"] += particle["vel"] * delta
-		particle["vel"] *= pow(particle["drag"], delta)
+		if particle["kind"] == "ember":
+			FireVisual.advance_fragment(particle)
+			FireVisual.update_trail(particle, previous, delta)
+		else:
+			particle["pos"] += particle["vel"] * delta
+			particle["vel"] *= pow(particle["drag"], delta)
+			var source: Dictionary = particle.get("source", {})
+			if not source.is_empty():
+				var age: float = particle["max_life"] - particle["life"]
+				if age < 0.28 and enemies.has(source):
+					particle["pos"] += source["pos"] - particle["source_pos"]
+					particle["source_pos"] = source["pos"]
+				else:
+					particle["source"] = {}
 		particle["size"] = maxf(0.1, particle["size"] + particle["growth"] * delta)
+		if particle["life"] <= 0.0 and particle["kind"] == "ember":
+			# Keep the sampled smoke path after the hot fragment has gone.
+			# Include overshoot so a long update cannot resurrect expired effects.
+			particle["kind"] = "ember_wake"
+			particle["smoke_age"] = particle["max_life"]
+			particle["life"] += 0.55
+			particle["max_life"] = 0.55
+			particle["vel"] = Vector2.ZERO
+			particle["growth"] = 5.0
 		if particle["life"] <= 0.0:
 			particles.remove_at(i)
 
@@ -947,6 +1065,13 @@ func _check_wave_complete() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_V:
+		twin_shots = not twin_shots
+		twin_timer = 0.0
+		beam_visible_timer = 0.0
+		beam_pause_timer = 0.0
+		beam_contact = false
+		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F1:
 		state = GameState.TITLE
 		encounter_preview = false
@@ -1044,16 +1169,27 @@ func _draw() -> void:
 	if shake > 0.0:
 		draw_offset = Vector2(rng.randf_range(-shake, shake), rng.randf_range(-shake, shake))
 		draw_set_transform(draw_offset)
-	_draw_background()
-	_draw_world()
+	$Backdrop.position = draw_offset
+	$Backdrop.queue_redraw()
+	$World.position = draw_offset
+	$World.queue_redraw()
+	for enemy in enemies:
+		if enemy.has("turrets") and state == GameState.PLAYING:
+			HeavyEnemy.draw_hazards(self, enemy)
+	$ThreatLayer/Threats.position = draw_offset
+	$ThreatLayer/Threats.queue_redraw()
+	$Flares.position = draw_offset
+	$Flares.queue_redraw()
+	$Fire.position = draw_offset
+	$Fire.queue_redraw()
 	draw_set_transform(Vector2.ZERO)
-	_draw_ui()
+	$InterfaceLayer/Interface.queue_redraw()
 	if flash > 0.0:
 		draw_rect(Rect2(Vector2.ZERO, screen_size), Color(0.75, 0.94, 1.0, flash * 0.32))
 
 
-func _draw_background() -> void:
-	draw_rect(Rect2(Vector2(-30.0, -30.0), screen_size + Vector2(60.0, 60.0)), Color(0.008, 0.012, 0.045))
+func _draw_background(canvas: Node2D) -> void:
+	canvas.draw_rect(Rect2(Vector2(-30.0, -30.0), screen_size + Vector2(60.0, 60.0)), Color(0.008, 0.012, 0.045))
 	# Preserve the source aspect ratio on both 16:9 desktop previews and tall
 	# iPhones. A small overscan leaves room for restrained camera drift.
 	var texture_size := BATTLEFIELD_BACKGROUND.get_size()
@@ -1061,77 +1197,65 @@ func _draw_background() -> void:
 	var background_size := texture_size * cover_scale
 	var drift := Vector2(sin(elapsed * 0.07) * 6.0, sin(elapsed * 0.045) * 9.0)
 	var background_rect := Rect2((screen_size - background_size) * 0.5 + drift, background_size)
-	draw_texture_rect(BATTLEFIELD_BACKGROUND, background_rect, false, Color(0.82, 0.86, 0.9, 1.0))
+	canvas.draw_texture_rect(BATTLEFIELD_BACKGROUND, background_rect, false, Color(0.82, 0.86, 0.9, 1.0))
 	# Reserve the brightest values for live bullets, impacts, and the player beam.
-	draw_rect(Rect2(Vector2.ZERO, screen_size), Color(0.008, 0.015, 0.035, 0.23))
-	EnvironmentVisual.draw_layers(self)
+	canvas.draw_rect(Rect2(Vector2.ZERO, screen_size), Color(0.008, 0.015, 0.035, 0.23))
+	EnvironmentVisual.draw_layers(self, canvas)
 	for star in stars:
 		var color := Color(0.68, 0.9, 1.0, star["alpha"] * 0.38)
-		draw_line(star["pos"], star["pos"] - Vector2(0.0, star["size"] * 3.2), color, maxf(0.7, star["size"] * 0.72))
+		canvas.draw_line(star["pos"], star["pos"] - Vector2(0.0, star["size"] * 3.2), color, maxf(0.7, star["size"] * 0.72))
 
 
-func _draw_world() -> void:
+func _draw_world(canvas: Node2D) -> void:
 	for pickup in pickups:
-		_draw_glow(pickup["pos"], 8.0, Color(0.35, 1.0, 0.82), 3)
-		draw_circle(pickup["pos"], 3.0, Color.WHITE)
-
-	if state == GameState.PLAYING and beam_visible_timer > 0.0:
-		_draw_player_beam()
+		_draw_glow(pickup["pos"], 8.0, Color(0.35, 1.0, 0.82), 3, canvas)
+		canvas.draw_circle(pickup["pos"], 3.0, Color.WHITE)
 
 	for enemy in enemies:
-		_draw_enemy(enemy)
+		_draw_enemy(enemy, canvas)
 
-	for enemy in enemies:
-		if enemy.has("turrets") and state == GameState.PLAYING:
-			HeavyEnemy.draw_hazards(self, enemy)
-	for bullet in enemy_bullets:
-		_draw_enemy_bullet(bullet)
 
 	for ring in shockwaves:
 		var ring_color: Color = ring["color"]
 		ring_color.a = clampf(ring["life"] * 1.5, 0.0, 0.8)
-		draw_arc(ring["pos"], ring["radius"], 0.0, TAU_F, 72, ring_color.lightened(0.35), 2.2)
+		canvas.draw_arc(ring["pos"], ring["radius"], 0.0, TAU_F, 72, ring_color.lightened(0.35), 2.2)
 		ring_color.a *= 0.28
-		draw_arc(ring["pos"], ring["radius"] * 1.035, 0.0, TAU_F, 72, ring_color, 7.0)
+		canvas.draw_arc(ring["pos"], ring["radius"] * 1.035, 0.0, TAU_F, 72, ring_color, 7.0)
 
 	for particle in particles:
+		if particle["kind"] in ["fire", "ember", "ember_wake"]:
+			FireVisual.draw_smoke(canvas, particle)
 		var color: Color = particle["color"]
 		var ratio: float = clampf(particle["life"] / particle["max_life"], 0.0, 1.0)
 		color.a = ratio
 		match particle["kind"]:
 			"spark":
-				draw_line(particle["pos"], particle["pos"] - particle["vel"].normalized() * particle["size"] * 4.2, Color(color.r * 1.6, color.g * 1.6, color.b * 1.6, ratio), particle["size"])
-				draw_circle(particle["pos"], particle["size"] * 0.6, Color(minf(color.r * 1.8, 2.2), minf(color.g * 1.8, 2.2), minf(color.b * 1.8, 2.2), ratio))
+				canvas.draw_line(particle["pos"], particle["pos"] - particle["vel"].normalized() * particle["size"] * 4.2, Color(color.r * 1.6, color.g * 1.6, color.b * 1.6, ratio), particle["size"])
+				canvas.draw_circle(particle["pos"], particle["size"] * 0.6, Color(minf(color.r * 1.8, 2.2), minf(color.g * 1.8, 2.2), minf(color.b * 1.8, 2.2), ratio))
 			"plasma":
 				var fire_size: float = particle["size"]
 				var fire_core := Color(minf(color.r * 1.7, 2.25), minf(color.g * 1.7, 2.25), minf(color.b * 1.7, 2.25), ratio)
-				draw_circle(particle["pos"], fire_size * 1.75, Color(color.r, color.g * 0.45, color.b * 0.25, ratio * 0.1))
-				draw_circle(particle["pos"], fire_size, Color(color.r, color.g, color.b, ratio * 0.58))
-				draw_circle(particle["pos"] - particle["vel"].normalized() * fire_size * 0.18, fire_size * 0.42, fire_core)
-			"fire":
-				var flame_size: float = particle["size"] * 3.4
-				var flame_rect := Rect2(particle["pos"] - Vector2.ONE * flame_size * 0.5, Vector2.ONE * flame_size)
-				draw_texture_rect(FIREBALL_TEXTURE, flame_rect, false, Color(1.0, 0.82, 0.64, ratio * 0.92))
-				draw_circle(particle["pos"], particle["size"] * 0.32, Color(2.2, 1.5, 0.62, ratio * 0.72))
+				canvas.draw_circle(particle["pos"], fire_size * 1.75, Color(color.r, color.g * 0.45, color.b * 0.25, ratio * 0.1))
+				canvas.draw_circle(particle["pos"], fire_size, Color(color.r, color.g, color.b, ratio * 0.58))
+				canvas.draw_circle(particle["pos"] - particle["vel"].normalized() * fire_size * 0.18, fire_size * 0.42, fire_core)
 			"smoke":
 				var smoke_size: float = particle["size"] * 3.1
 				var smoke_rect := Rect2(particle["pos"] - Vector2.ONE * smoke_size * 0.5, Vector2.ONE * smoke_size)
-				draw_texture_rect(SMOKE_TEXTURE, smoke_rect, false, Color(0.72, 0.76, 0.84, ratio * 0.52))
+				canvas.draw_texture_rect(SMOKE_TEXTURE, smoke_rect, false, Color(0.72, 0.76, 0.84, ratio * 0.52))
 
 	if state == GameState.PLAYING or state == GameState.GAME_OVER:
-		_draw_player()
+		_draw_player(canvas)
 
-
-func _draw_enemy_bullet(bullet: Dictionary) -> void:
+func _draw_enemy_bullet(bullet: Dictionary, canvas: Node2D) -> void:
 	if bullet.get("style", "") == "missile":
-		Missile.draw_missile(self, bullet)
+		Missile.draw_missile(canvas, bullet)
 		return
 	if bullet.get("style", "") == "dart":
 		var pos: Vector2 = bullet["pos"]
 		var direction: Vector2 = bullet["vel"].normalized()
 		var side := direction.orthogonal()
-		draw_colored_polygon(PackedVector2Array([pos + direction * 11.0, pos - direction * 7.0 + side * 5.0, pos - direction * 4.0, pos - direction * 7.0 - side * 5.0]), Color(1.8, 0.42, 0.04))
-		draw_line(pos - direction * 3.0, pos + direction * 7.0, Color(3.0, 1.8, 0.6), 2.0, true)
+		canvas.draw_colored_polygon(PackedVector2Array([pos + direction * 11.0, pos - direction * 7.0 + side * 5.0, pos - direction * 4.0, pos - direction * 7.0 - side * 5.0]), Color(1.8, 0.42, 0.04))
+		canvas.draw_line(pos - direction * 3.0, pos + direction * 7.0, Color(3.0, 1.8, 0.6), 2.0, true)
 		return
 	# Phoenix-style hostile shots are glossy directional capsules, not comet trails.
 	var pos: Vector2 = bullet["pos"]
@@ -1147,154 +1271,130 @@ func _draw_enemy_bullet(bullet: Dictionary) -> void:
 	# Restrained soft aura: enough separation from the background without merging patterns.
 	var glow_radius := radius * 1.48
 	var glow_color := Color(1.0, 0.015, 0.0, 0.065)
-	draw_line(back, front, glow_color, glow_radius * 2.0, true)
-	draw_circle(back, glow_radius, glow_color, true, -1.0, true)
-	draw_circle(front, glow_radius, glow_color, true, -1.0, true)
+	canvas.draw_line(back, front, glow_color, glow_radius * 2.0, true)
+	canvas.draw_circle(back, glow_radius, glow_color, true, -1.0, true)
+	canvas.draw_circle(front, glow_radius, glow_color, true, -1.0, true)
 
 	# Dark rim, saturated red glass shell, then a narrow orange-hot interior.
 	var rim_radius := radius * 1.04
 	var rim_color := Color(0.32, 0.004, 0.001, 0.96)
-	draw_line(back, front, rim_color, rim_radius * 2.0, true)
-	draw_circle(back, rim_radius, rim_color, true, -1.0, true)
-	draw_circle(front, rim_radius, rim_color, true, -1.0, true)
+	canvas.draw_line(back, front, rim_color, rim_radius * 2.0, true)
+	canvas.draw_circle(back, rim_radius, rim_color, true, -1.0, true)
+	canvas.draw_circle(front, rim_radius, rim_color, true, -1.0, true)
 
 	var shell_radius := radius * 0.83
 	var shell_color := Color(1.25, 0.025, 0.004, 0.98)
-	draw_line(back, front, shell_color, shell_radius * 2.0, true)
-	draw_circle(back, shell_radius, shell_color, true, -1.0, true)
-	draw_circle(front, shell_radius, shell_color, true, -1.0, true)
+	canvas.draw_line(back, front, shell_color, shell_radius * 2.0, true)
+	canvas.draw_circle(back, shell_radius, shell_color, true, -1.0, true)
+	canvas.draw_circle(front, shell_radius, shell_color, true, -1.0, true)
 
 	var inner_back := pos - direction * half_segment * 0.38
 	var inner_front := pos + direction * half_segment * 0.46
 	var inner_radius := radius * 0.47
 	var inner_color := Color(1.8, 0.3, 0.018, 0.98)
-	draw_line(inner_back, inner_front, inner_color, inner_radius * 2.0, true)
-	draw_circle(inner_back, inner_radius, inner_color, true, -1.0, true)
-	draw_circle(inner_front, inner_radius, inner_color, true, -1.0, true)
+	canvas.draw_line(inner_back, inner_front, inner_color, inner_radius * 2.0, true)
+	canvas.draw_circle(inner_back, inner_radius, inner_color, true, -1.0, true)
+	canvas.draw_circle(inner_front, inner_radius, inner_color, true, -1.0, true)
 
 	var highlight_pos := front - direction * radius * 0.32 - normal * radius * 0.18
-	draw_circle(highlight_pos, radius * 0.24, Color(2.0, 1.15, 0.34, 0.98), true, -1.0, true)
+	canvas.draw_circle(highlight_pos, radius * 0.24, Color(2.0, 1.15, 0.34, 0.98), true, -1.0, true)
 
 
-func _draw_player_beam() -> void:
-	BeamVisual.draw_beam(self)
+func _draw_player_beam(canvas: Node2D) -> void:
+	BeamVisual.draw_beam(self, canvas)
 
 
-func _draw_player() -> void:
+func _draw_player(canvas: Node2D) -> void:
 	if player_hp <= 0:
 		return
 	var invulnerability_pulse := 0.0
 	if player_invulnerable > 0.0:
 		invulnerability_pulse = 0.5 + sin(elapsed * 11.0) * 0.5
 		var shield_radius := 82.0 + invulnerability_pulse * 4.0
-		draw_circle(player_pos, shield_radius, Color(0.04, 0.58, 1.8, 0.035 + invulnerability_pulse * 0.018))
-		draw_arc(player_pos, shield_radius, -elapsed * 2.1, -elapsed * 2.1 + PI * 1.35, 42, Color(0.25, 1.05, 2.5, 0.34 + invulnerability_pulse * 0.2), 1.8, true)
-		draw_arc(player_pos, shield_radius - 4.0, elapsed * 1.7, elapsed * 1.7 + PI * 0.82, 30, Color(0.72, 1.55, 2.8, 0.2 + invulnerability_pulse * 0.16), 1.1, true)
+		canvas.draw_circle(player_pos, shield_radius, Color(0.04, 0.58, 1.8, 0.035 + invulnerability_pulse * 0.018))
+		canvas.draw_arc(player_pos, shield_radius, -elapsed * 2.1, -elapsed * 2.1 + PI * 1.35, 42, Color(0.25, 1.05, 2.5, 0.34 + invulnerability_pulse * 0.2), 1.8, true)
+		canvas.draw_arc(player_pos, shield_radius - 4.0, elapsed * 1.7, elapsed * 1.7 + PI * 0.82, 30, Color(0.72, 1.55, 2.8, 0.2 + invulnerability_pulse * 0.16), 1.1, true)
 	if aura_active:
 		var pulse := 1.0 + sin(elapsed * 7.0) * 0.04
-		draw_circle(player_pos, AURA_RADIUS * pulse, Color(0.04, 0.5, 1.2, 0.04))
-		draw_arc(player_pos, AURA_RADIUS * pulse, -elapsed * 1.8, TAU_F - elapsed * 1.8, 64, Color(0.15, 0.9, 1.65, 0.82), 3.0)
-		draw_arc(player_pos, AURA_RADIUS * 0.88, elapsed * 2.3, TAU_F + elapsed * 2.3, 48, Color(0.7, 1.4, 1.8, 0.34), 2.0)
+		canvas.draw_circle(player_pos, AURA_RADIUS * pulse, Color(0.04, 0.5, 1.2, 0.04))
+		canvas.draw_arc(player_pos, AURA_RADIUS * pulse, -elapsed * 1.8, TAU_F - elapsed * 1.8, 64, Color(0.15, 0.9, 1.65, 0.82), 3.0)
+		canvas.draw_arc(player_pos, AURA_RADIUS * 0.88, elapsed * 2.3, TAU_F + elapsed * 2.3, 48, Color(0.7, 1.4, 1.8, 0.34), 2.0)
 		for spoke in range(6):
 			var spoke_angle := elapsed * 0.65 + TAU_F * float(spoke) / 6.0
 			var spoke_dir := Vector2.from_angle(spoke_angle)
-			draw_line(player_pos + spoke_dir * AURA_RADIUS * 0.91, player_pos + spoke_dir * AURA_RADIUS, Color(0.25, 1.0, 1.8, 0.55), 2.0)
+			canvas.draw_line(player_pos + spoke_dir * AURA_RADIUS * 0.91, player_pos + spoke_dir * AURA_RADIUS, Color(0.25, 1.0, 1.8, 0.55), 2.0)
 
-	_draw_glow(player_pos + Vector2(0.0, 3.0), 22.0, Color(0.06, 0.5, 1.15), 2)
+	_draw_glow(player_pos + Vector2(0.0, 3.0), 22.0, Color(0.06, 0.5, 1.15), 2, canvas)
 	var engine_pulse := 1.0 + sin(elapsed * 42.0) * 0.18
 	for engine_x in [-PLAYER_ENGINE_SPREAD, PLAYER_ENGINE_SPREAD]:
-		draw_circle(player_pos + Vector2(engine_x, PLAYER_ENGINE_Y + 2.0), 8.5 * engine_pulse, Color(0.04, 0.55, 1.7, 0.18))
-		draw_circle(player_pos + Vector2(engine_x, PLAYER_ENGINE_Y), 3.1 * engine_pulse, Color(1.3, 1.9, 2.0))
+		canvas.draw_circle(player_pos + Vector2(engine_x, PLAYER_ENGINE_Y + 2.0), 8.5 * engine_pulse, Color(0.04, 0.55, 1.7, 0.18))
+		canvas.draw_circle(player_pos + Vector2(engine_x, PLAYER_ENGINE_Y), 3.1 * engine_pulse, Color(1.3, 1.9, 2.0))
 	var player_rect := Rect2(player_pos - PLAYER_VISUAL_SIZE * 0.5, PLAYER_VISUAL_SIZE)
 	var ship_modulate := Color(1.0 + invulnerability_pulse * 0.08, 1.0 + invulnerability_pulse * 0.16, 1.0 + invulnerability_pulse * 0.28)
-	draw_texture_rect(PLAYER_SHIP_TEXTURE, player_rect, false, ship_modulate)
-	draw_circle(player_pos, PLAYER_RADIUS, Color(0.02, 0.12, 0.18, 0.9))
-	draw_arc(player_pos, PLAYER_RADIUS, 0.0, TAU, 24, Color(0.4, 1.3, 1.8), 1.2, true)
+	canvas.draw_texture_rect(PLAYER_SHIP_TEXTURE, player_rect, false, ship_modulate)
+	canvas.draw_circle(player_pos, PLAYER_RADIUS, Color(0.02, 0.12, 0.18, 0.9))
+	canvas.draw_arc(player_pos, PLAYER_RADIUS, 0.0, TAU, 24, Color(0.4, 1.3, 1.8), 1.2, true)
 	# Re-light the reactor and weapon ports after the textured hull is drawn.
-	_draw_glow(player_pos + Vector2(0.0, 1.0), 5.0, Color(1.6, 0.65, 0.06), 2)
-	draw_circle(player_pos + Vector2(0.0, 1.0), 2.4, Color(2.0, 1.15, 0.3))
-	if muzzle_flash > 0.0:
-		var flash_strength := muzzle_flash / PLAYER_BEAM_ATTACK_TIME
-		var emitter := player_pos + PLAYER_NOSE_OFFSET
-		var flare_tip := emitter + Vector2(0.0, -27.0 * flash_strength)
-		var flare_wing := 13.0 * flash_strength
-		draw_circle(emitter, 19.0 * flash_strength, Color(0.0, 0.48, 2.8, flash_strength * 0.1))
-		draw_colored_polygon(PackedVector2Array([
-			flare_tip,
-			emitter + Vector2(flare_wing, 7.0),
-			emitter + Vector2(0.0, 3.0),
-			emitter + Vector2(-flare_wing, 7.0),
-		]), Color(0.12, 0.78, 3.2, flash_strength * 0.48))
-		for gun_x in [-17.0, 17.0]:
-			var port := player_pos + Vector2(gun_x, -57.0)
-			draw_line(port, emitter, Color(0.22, 1.0, 3.1, flash_strength * 0.62), 2.2, true)
-		draw_circle(emitter, 6.5 * flash_strength, Color(0.36, 1.25, 3.8, flash_strength * 0.75))
-		draw_circle(emitter, 2.5 * flash_strength, Color(3.4, 4.4, 4.8, flash_strength))
-		draw_arc(emitter, 12.0 + (1.0 - flash_strength) * 10.0, -2.8, -0.34, 18, Color(0.32, 1.0, 3.0, flash_strength * 0.62), 1.4, true)
+	_draw_glow(player_pos + Vector2(0.0, 1.0), 5.0, Color(1.6, 0.65, 0.06), 2, canvas)
+	canvas.draw_circle(player_pos + Vector2(0.0, 1.0), 2.4, Color(2.0, 1.15, 0.3))
 
-
-func _draw_enemy(enemy: Dictionary) -> void:
+func _draw_enemy(enemy: Dictionary, canvas: Node2D) -> void:
 	var pos: Vector2 = enemy["pos"]
 	var kind: String = enemy["kind"]
 	var color := _enemy_color(kind)
 	var radius: float = enemy["radius"]
-	_draw_glow(pos, radius * 0.55, color * 0.9, 2)
+	_draw_glow(pos, radius * 0.55, color * 0.9, 2, canvas)
 	var hit_light: float = clampf(enemy["hit_flash"], 0.0, 1.0)
-	var hull_modulate := Color(1.0 + hit_light * 1.15, 1.0 + hit_light * 1.48, 1.0 + hit_light * 1.85)
+	var hull_modulate := Color(1.0 + hit_light * 0.28, 1.0 + hit_light * 0.35, 1.0 + hit_light * 0.45)
 	match kind:
 		"scout":
-			_draw_enemy_engines(pos, 31.0, 1.32, color)
-			draw_texture_rect(SCOUT_TEXTURE, Rect2(pos - SCOUT_VISUAL_SIZE * 0.5, SCOUT_VISUAL_SIZE), false, hull_modulate)
+			_draw_enemy_engines(pos, 31.0, 1.32, color, canvas)
+			canvas.draw_texture_rect(SCOUT_TEXTURE, Rect2(pos - SCOUT_VISUAL_SIZE * 0.5, SCOUT_VISUAL_SIZE), false, hull_modulate)
 		"spinner":
-			_draw_enemy_engines(pos, 34.0, 1.42, color)
+			_draw_enemy_engines(pos, 34.0, 1.42, color, canvas)
 			var spinner_modulate := hull_modulate * Color(1.08, 0.62, 1.28)
-			draw_texture_rect(SCOUT_TEXTURE, Rect2(pos - SPINNER_VISUAL_SIZE * 0.5, SPINNER_VISUAL_SIZE), false, spinner_modulate)
-			draw_arc(pos, radius * 1.13, enemy["age"] * 1.8, enemy["age"] * 1.8 + PI * 1.35, 32, Color(1.2, 0.3, 2.6, 0.72), 2.0)
-			draw_arc(pos, radius * 1.25, -enemy["age"] * 1.15, -enemy["age"] * 1.15 + PI * 0.92, 24, Color(0.7, 0.2, 2.2, 0.42), 1.2)
+			canvas.draw_texture_rect(SCOUT_TEXTURE, Rect2(pos - SPINNER_VISUAL_SIZE * 0.5, SPINNER_VISUAL_SIZE), false, spinner_modulate)
+			canvas.draw_arc(pos, radius * 1.13, enemy["age"] * 1.8, enemy["age"] * 1.8 + PI * 1.35, 32, Color(1.2, 0.3, 2.6, 0.72), 2.0)
+			canvas.draw_arc(pos, radius * 1.25, -enemy["age"] * 1.15, -enemy["age"] * 1.15 + PI * 0.92, 24, Color(0.7, 0.2, 2.2, 0.42), 1.2)
 		"heavy":
-			_draw_enemy_engines(pos, 46.0, 1.8, color)
-			draw_texture_rect(HEAVY_TEXTURE, Rect2(pos - HEAVY_VISUAL_SIZE * 0.5, HEAVY_VISUAL_SIZE), false, hull_modulate)
-			_draw_glow(pos + Vector2(0.0, 7.0), 7.0, Color(3.0, 1.0, 0.08), 3)
+			_draw_enemy_engines(pos, 46.0, 1.8, color, canvas)
+			canvas.draw_texture_rect(HEAVY_TEXTURE, Rect2(pos - HEAVY_VISUAL_SIZE * 0.5, HEAVY_VISUAL_SIZE), false, hull_modulate)
+			_draw_glow(pos + Vector2(0.0, 7.0), 7.0, Color(3.0, 1.0, 0.08), 3, canvas)
 		"boss":
-			_draw_boss(pos, enemy)
+			_draw_boss(pos, enemy, canvas)
 	if enemy.has("turrets"):
-		HeavyEnemy.draw_components(self, enemy)
-	_draw_enemy_health(enemy)
+		HeavyEnemy.draw_components(canvas, enemy)
+	_draw_enemy_health(enemy, canvas)
 
-
-func _draw_enemy_engines(pos: Vector2, spread: float, scale: float, color: Color) -> void:
+func _draw_enemy_engines(pos: Vector2, spread: float, scale: float, color: Color, canvas: Node2D) -> void:
 	var pulse := 1.0 + sin(elapsed * 31.0 + pos.x * 0.01) * 0.2
 	for side in [-1.0, 1.0]:
 		var engine_pos := pos + Vector2(spread * 0.5 * side, -spread * 0.75)
-		draw_circle(engine_pos, 7.5 * scale * pulse, Color(color.r * 1.4, color.g * 0.5, color.b * 0.45, 0.12))
-		draw_circle(engine_pos, 2.6 * scale * pulse, Color(3.8, 0.7, 0.32))
+		canvas.draw_circle(engine_pos, 7.5 * scale * pulse, Color(color.r * 1.4, color.g * 0.5, color.b * 0.45, 0.12))
+		canvas.draw_circle(engine_pos, 2.6 * scale * pulse, Color(3.8, 0.7, 0.32))
 
-
-func _draw_boss(pos: Vector2, enemy: Dictionary) -> void:
+func _draw_boss(pos: Vector2, enemy: Dictionary, canvas: Node2D) -> void:
 	var hit_light: float = clampf(enemy["hit_flash"], 0.0, 1.0)
 	var boss_modulate := Color(1.0 + hit_light * 0.95, 1.0 + hit_light * 1.22, 1.0 + hit_light * 1.52)
-	_draw_enemy_engines(pos + Vector2(0.0, -23.0), 122.0, 2.1, _enemy_color("boss"))
-	draw_texture_rect(BOSS_TEXTURE, Rect2(pos - Vector2(185.0, 123.0), Vector2(370.0, 247.0)), false, boss_modulate)
+	_draw_enemy_engines(pos + Vector2(0.0, -23.0), 122.0, 2.1, _enemy_color("boss"), canvas)
+	canvas.draw_texture_rect(BOSS_TEXTURE, Rect2(pos - Vector2(185.0, 123.0), Vector2(370.0, 247.0)), false, boss_modulate)
 	var core_size: float = 25.0 + sin(enemy["age"] * 5.0) * 4.0
-	_draw_glow(pos + Vector2(0.0, -5.0), core_size * 1.2, Color(2.6, 0.12, 1.2), 4)
-	draw_circle(pos + Vector2(0.0, -5.0), core_size * 0.32, Color(3.8, 0.36, 1.6, 0.72))
+	_draw_glow(pos + Vector2(0.0, -5.0), core_size * 1.2, Color(2.6, 0.12, 1.2), 4, canvas)
+	canvas.draw_circle(pos + Vector2(0.0, -5.0), core_size * 0.32, Color(3.8, 0.36, 1.6, 0.72))
 
-
-func _draw_enemy_health(enemy: Dictionary) -> void:
+func _draw_enemy_health(enemy: Dictionary, canvas: Node2D) -> void:
 	if enemy["hp"] >= enemy["max_hp"] or enemy["kind"] == "boss":
 		return
 	var width: float = enemy["radius"] * 1.5
 	var pos: Vector2 = enemy["pos"] + Vector2(-width * 0.5, -enemy["radius"] - 12.0)
-	draw_rect(Rect2(pos, Vector2(width, 4.0)), Color(0.04, 0.04, 0.09, 0.8))
-	draw_rect(Rect2(pos, Vector2(width * maxf(0.0, enemy["hp"] / enemy["max_hp"]), 4.0)), _enemy_color(enemy["kind"]))
+	canvas.draw_rect(Rect2(pos, Vector2(width, 4.0)), Color(0.04, 0.04, 0.09, 0.8))
+	canvas.draw_rect(Rect2(pos, Vector2(width * maxf(0.0, enemy["hp"] / enemy["max_hp"]), 4.0)), _enemy_color(enemy["kind"]))
 
-
-func _draw_glow(pos: Vector2, radius: float, color: Color, layers: int) -> void:
+func _draw_glow(pos: Vector2, radius: float, color: Color, layers: int, canvas: Node2D) -> void:
 	for i in range(layers, 0, -1):
 		var c := color
 		c.a = 0.018 * float(layers - i + 1)
-		draw_circle(pos, radius * (1.0 + float(i) * 0.32), c)
-
+		canvas.draw_circle(pos, radius * (1.0 + float(i) * 0.32), c)
 
 func _enemy_color(kind: String) -> Color:
 	match kind:
@@ -1309,121 +1409,122 @@ func _enemy_color(kind: String) -> Color:
 	return Color.WHITE
 
 
-func _draw_ui() -> void:
+func _draw_ui(canvas: Node2D) -> void:
 	match state:
 		GameState.TITLE:
-			_draw_title()
+			_draw_title(canvas)
 		GameState.PLAYING:
-			_draw_hud()
+			_draw_hud(canvas)
 			if paused:
-				_draw_pause()
+				_draw_pause(canvas)
 		GameState.GAME_OVER:
-			_draw_hud()
-			_draw_end_panel(false)
+			_draw_hud(canvas)
+			_draw_end_panel(canvas, false)
 		GameState.VICTORY:
-			_draw_hud()
-			_draw_end_panel(true)
+			_draw_hud(canvas)
+			_draw_end_panel(canvas, true)
 
 
-func _draw_title() -> void:
+func _draw_title(canvas: Node2D) -> void:
 	var center := Vector2(screen_size.x * 0.5, screen_size.y * 0.36)
 	for i in range(5, 0, -1):
-		draw_arc(center, 72.0 + float(i) * 18.0 + sin(Time.get_ticks_msec() * 0.001 + i) * 6.0, -1.1, 4.2, 56, Color(0.15, 0.65, 1.0, 0.05 * i), 3.0)
-	_draw_centered("STARFALL", center.y - 14.0, 58, Color(0.78, 0.95, 1.0))
-	_draw_centered("PROTOCOL", center.y + 40.0, 30, Color(0.24, 0.82, 1.0))
-	_draw_centered("A ONE-MISSION BULLET HELL", center.y + 84.0, 15, Color(0.62, 0.7, 0.87))
+		canvas.draw_arc(center, 72.0 + float(i) * 18.0 + sin(Time.get_ticks_msec() * 0.001 + i) * 6.0, -1.1, 4.2, 56, Color(0.15, 0.65, 1.0, 0.05 * i), 3.0)
+	_draw_centered(canvas, "STARFALL", center.y - 14.0, 58, Color(0.78, 0.95, 1.0))
+	_draw_centered(canvas, "PROTOCOL", center.y + 40.0, 30, Color(0.24, 0.82, 1.0))
+	_draw_centered(canvas, "A ONE-MISSION BULLET HELL", center.y + 84.0, 15, Color(0.62, 0.7, 0.87))
 	var panel := Rect2(Vector2(screen_size.x * 0.13, screen_size.y * 0.57), Vector2(screen_size.x * 0.74, 190.0))
-	draw_rect(panel, Color(0.025, 0.04, 0.11, 0.86), true)
-	draw_rect(panel, Color(0.2, 0.68, 1.0, 0.36), false, 2.0)
-	_draw_centered("DRAG / WASD / LEFT STICK TO MOVE", panel.position.y + 43.0, 17, Color(0.82, 0.9, 1.0))
-	_draw_centered("HOLD PULSE  •  SPACE / LB", panel.position.y + 79.0, 16, Color(0.28, 0.9, 1.0))
-	_draw_centered("TRIGGER NOVA  •  E / RB", panel.position.y + 112.0, 16, Color(1.0, 0.67, 0.24))
-	_draw_centered("Weapons fire automatically", panel.position.y + 153.0, 15, Color(0.58, 0.65, 0.79))
+	canvas.draw_rect(panel, Color(0.025, 0.04, 0.11, 0.86), true)
+	canvas.draw_rect(panel, Color(0.2, 0.68, 1.0, 0.36), false, 2.0)
+	_draw_centered(canvas, "DRAG / WASD / LEFT STICK TO MOVE", panel.position.y + 43.0, 17, Color(0.82, 0.9, 1.0))
+	_draw_centered(canvas, "HOLD PULSE  •  SPACE / LB", panel.position.y + 79.0, 16, Color(0.28, 0.9, 1.0))
+	_draw_centered(canvas, "TRIGGER NOVA  •  E / RB", panel.position.y + 112.0, 16, Color(1.0, 0.67, 0.24))
+	_draw_centered(canvas, "AUTO FIRE · V: SWITCH WEAPON", panel.position.y + 153.0, 15, Color(0.58, 0.65, 0.79))
 	var pulse := 0.72 + sin(Time.get_ticks_msec() * 0.004) * 0.2
-	_draw_centered("F2  /  HEAVY ENCOUNTER", screen_size.y * 0.89, 16, Color(0.65, 0.8, 0.92))
-	_draw_centered("CLICK OR TAP TO LAUNCH", screen_size.y * 0.83, 22, Color(0.76, 0.94, 1.0, pulse))
+	_draw_centered(canvas, "F2  /  HEAVY ENCOUNTER", screen_size.y * 0.89, 16, Color(0.65, 0.8, 0.92))
+	_draw_centered(canvas, "CLICK OR TAP TO LAUNCH", screen_size.y * 0.83, 22, Color(0.76, 0.94, 1.0, pulse))
 
 
-func _draw_hud() -> void:
-	draw_rect(Rect2(Vector2.ZERO, Vector2(screen_size.x, 86.0)), Color(0.006, 0.012, 0.04, 0.72))
-	_draw_text("SCORE", Vector2(22.0, 27.0), 13, Color(0.42, 0.56, 0.75))
-	_draw_text(_format_score(score), Vector2(22.0, 57.0), 25, Color(0.9, 0.97, 1.0))
-	_draw_centered("TURRET TRIAL" if encounter_preview else "WAVE %d/4" % mini(wave, 4), 27.0, 16, Color(0.52, 0.82, 1.0))
-	_draw_centered("%02d:%05.2f" % [int(elapsed / 60.0), fmod(elapsed, 60.0)], 52.0, 17, Color(0.85, 0.93, 1.0))
+func _draw_hud(canvas: Node2D) -> void:
+	_draw_centered(canvas, "TWIN SHOTS · V" if twin_shots else "LANCE · V", screen_size.y - 32, 12, Color(0.45, 0.72, 0.9))
+	canvas.draw_rect(Rect2(Vector2.ZERO, Vector2(screen_size.x, 86.0)), Color(0.006, 0.012, 0.04, 0.72))
+	_draw_text(canvas, "SCORE", Vector2(22.0, 27.0), 13, Color(0.42, 0.56, 0.75))
+	_draw_text(canvas, _format_score(score), Vector2(22.0, 57.0), 25, Color(0.9, 0.97, 1.0))
+	_draw_centered(canvas, "TURRET TRIAL" if encounter_preview else "WAVE %d/4" % mini(wave, 4), 27.0, 16, Color(0.52, 0.82, 1.0))
+	_draw_centered(canvas, "%02d:%05.2f" % [int(elapsed / 60.0), fmod(elapsed, 60.0)], 52.0, 17, Color(0.85, 0.93, 1.0))
 	for step in range(4):
 		var c := Color(0.15, 0.8, 1.0) if step < wave else Color(0.16, 0.21, 0.3)
-		draw_line(Vector2(screen_size.x * 0.5 - 42 + step * 22, 70), Vector2(screen_size.x * 0.5 - 26 + step * 22, 70), c, 3.0)
+		canvas.draw_line(Vector2(screen_size.x * 0.5 - 42 + step * 22, 70), Vector2(screen_size.x * 0.5 - 26 + step * 22, 70), c, 3.0)
 
-	_draw_text("HULL", Vector2(screen_size.x - 105.0, 27.0), 13, Color(0.42, 0.56, 0.75))
+	_draw_text(canvas, "HULL", Vector2(screen_size.x - 105.0, 27.0), 13, Color(0.42, 0.56, 0.75))
 	for i in range(3):
 		var c := Color(0.25, 0.9, 1.0) if i < player_hp else Color(0.16, 0.2, 0.29)
-		draw_circle(Vector2(screen_size.x - 91.0 + i * 28.0, 55.0), 8.0, c)
+		canvas.draw_circle(Vector2(screen_size.x - 91.0 + i * 28.0, 55.0), 8.0, c)
 
 	if wave == 4 and not enemies.is_empty():
 		for enemy in enemies:
 			if enemy["kind"] == "boss":
 				var bar_rect := Rect2(Vector2(80.0, 101.0), Vector2(screen_size.x - 160.0, 12.0))
-				draw_rect(bar_rect, Color(0.11, 0.03, 0.13, 0.8))
-				draw_rect(Rect2(bar_rect.position, Vector2(bar_rect.size.x * maxf(0.0, enemy["hp"] / enemy["max_hp"]), bar_rect.size.y)), Color(1.0, 0.17, 0.54))
-				_draw_centered("DREADNOUGHT", 96.0, 12, Color(1.0, 0.65, 0.82))
+				canvas.draw_rect(bar_rect, Color(0.11, 0.03, 0.13, 0.8))
+				canvas.draw_rect(Rect2(bar_rect.position, Vector2(bar_rect.size.x * maxf(0.0, enemy["hp"] / enemy["max_hp"]), bar_rect.size.y)), Color(1.0, 0.17, 0.54))
+				_draw_centered(canvas, "DREADNOUGHT", 96.0, 12, Color(1.0, 0.65, 0.82))
 				break
 
 	var pause_rect := _pause_button_rect()
-	draw_rect(pause_rect, Color(0.02, 0.05, 0.09, 0.85))
-	_draw_text("II", pause_rect.position + Vector2(17, 29), 22, Color(0.75, 0.9, 1.0))
-	_draw_ability_button(_aura_button_rect(), "PULSE", aura_energy / MAX_AURA, Color(0.15, 0.76, 1.0), aura_active)
-	_draw_ability_button(_nova_button_rect(), "NOVA", nova_energy / MAX_NOVA, Color(1.0, 0.52, 0.14), nova_energy >= MAX_NOVA)
+	canvas.draw_rect(pause_rect, Color(0.02, 0.05, 0.09, 0.85))
+	_draw_text(canvas, "II", pause_rect.position + Vector2(17, 29), 22, Color(0.75, 0.9, 1.0))
+	_draw_ability_button(canvas, _aura_button_rect(), "PULSE", aura_energy / MAX_AURA, Color(0.15, 0.76, 1.0), aura_active)
+	_draw_ability_button(canvas, _nova_button_rect(), "NOVA", nova_energy / MAX_NOVA, Color(1.0, 0.52, 0.14), nova_energy >= MAX_NOVA)
 	if aura_exhausted:
-		_draw_text("RECHARGING", Vector2(20, screen_size.y - 135), 12, Color(0.4, 0.75, 0.9))
+		_draw_text(canvas, "RECHARGING", Vector2(20, screen_size.y - 135), 12, Color(0.4, 0.75, 0.9))
 	if encounter_preview:
-		_draw_centered("BREAK SHIELD · AIM AT SIDE TURRETS", 119.0, 14, Color(0.55, 0.85, 1.0))
-		_draw_centered("PULSE CLEARS BULLETS · DODGE LASERS", 145.0, 12, Color(0.85, 0.65, 0.42))
+		_draw_centered(canvas, "BREAK SHIELD · AIM AT SIDE TURRETS", 119.0, 14, Color(0.55, 0.85, 1.0))
+		_draw_centered(canvas, "PULSE CLEARS BULLETS · DODGE LASERS", 145.0, 12, Color(0.85, 0.65, 0.42))
 	if wave_banner > 0.0:
 		var title := "FINAL WAVE" if wave == 4 else "WAVE %d" % wave
 		var subtitle: String = "DREADNOUGHT INBOUND" if wave == 4 else ["", "FIRST CONTACT", "CROSSFIRE", "BREAK THE LINE"][wave]
 		var alpha := minf(1.0, wave_banner * 1.4)
-		_draw_centered(title, screen_size.y * 0.19, 28, Color(0.82, 0.95, 1.0, alpha))
-		_draw_centered(subtitle, screen_size.y * 0.19 + 28.0, 13, Color(0.34, 0.78, 1.0, alpha))
+		_draw_centered(canvas, title, screen_size.y * 0.19, 28, Color(0.82, 0.95, 1.0, alpha))
+		_draw_centered(canvas, subtitle, screen_size.y * 0.19 + 28.0, 13, Color(0.34, 0.78, 1.0, alpha))
 
 
-func _draw_ability_button(rect: Rect2, label: String, fill: float, color: Color, active: bool) -> void:
+func _draw_ability_button(canvas: Node2D, rect: Rect2, label: String, fill: float, color: Color, active: bool) -> void:
 	var center := rect.get_center()
 	var radius := rect.size.x * 0.5
-	draw_circle(center, radius, Color(0.015, 0.03, 0.08, 0.78))
-	draw_arc(center, radius - 4.0, -PI * 0.5, -PI * 0.5 + TAU_F * clampf(fill, 0.0, 1.0), 40, color, 6.0)
+	canvas.draw_circle(center, radius, Color(0.015, 0.03, 0.08, 0.78))
+	canvas.draw_arc(center, radius - 4.0, -PI * 0.5, -PI * 0.5 + TAU_F * clampf(fill, 0.0, 1.0), 40, color, 6.0)
 	if active:
-		draw_circle(center, radius - 10.0, Color(color.r, color.g, color.b, 0.16))
+		canvas.draw_circle(center, radius - 10.0, Color(color.r, color.g, color.b, 0.16))
 	var size := 15
 	var text_width := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
-	draw_string(font, center + Vector2(-text_width * 0.5, 5.0), label, HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(0.88, 0.96, 1.0))
+	canvas.draw_string(font, center + Vector2(-text_width * 0.5, 5.0), label, HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(0.88, 0.96, 1.0))
 
 
-func _draw_pause() -> void:
-	draw_rect(Rect2(Vector2.ZERO, screen_size), Color(0.0, 0.01, 0.04, 0.76))
-	_draw_centered("PAUSED", screen_size.y * 0.46, 44, Color(0.78, 0.94, 1.0))
-	_draw_centered("Press Esc or tap to resume", screen_size.y * 0.51, 17, Color(0.55, 0.68, 0.86))
+func _draw_pause(canvas: Node2D) -> void:
+	canvas.draw_rect(Rect2(Vector2.ZERO, screen_size), Color(0.0, 0.01, 0.04, 0.76))
+	_draw_centered(canvas, "PAUSED", screen_size.y * 0.46, 44, Color(0.78, 0.94, 1.0))
+	_draw_centered(canvas, "Press Esc or tap to resume", screen_size.y * 0.51, 17, Color(0.55, 0.68, 0.86))
 
 
-func _draw_end_panel(victory: bool) -> void:
-	draw_rect(Rect2(Vector2.ZERO, screen_size), Color(0.0, 0.008, 0.03, 0.7))
+func _draw_end_panel(canvas: Node2D, victory: bool) -> void:
+	canvas.draw_rect(Rect2(Vector2.ZERO, screen_size), Color(0.0, 0.008, 0.03, 0.7))
 	var panel := Rect2(Vector2(screen_size.x * 0.11, screen_size.y * 0.28), Vector2(screen_size.x * 0.78, 420.0))
-	draw_rect(panel, Color(0.02, 0.035, 0.09, 0.96), true)
-	draw_rect(panel, Color(0.24, 0.8, 1.0, 0.45) if victory else Color(1.0, 0.22, 0.38, 0.5), false, 3.0)
-	_draw_centered("MISSION COMPLETE" if victory else "SHIP LOST", panel.position.y + 76.0, 34, Color(0.64, 0.94, 1.0) if victory else Color(1.0, 0.5, 0.58))
-	_draw_centered(_format_score(score), panel.position.y + 144.0, 44, Color.WHITE)
-	_draw_centered("FINAL SCORE", panel.position.y + 173.0, 13, Color(0.45, 0.56, 0.75))
-	_draw_centered("GRAZES  %03d" % graze_count, panel.position.y + 226.0, 18, Color(0.7, 0.79, 0.92))
-	_draw_centered("TIME  %02d:%02d" % [int(elapsed / 60.0), int(elapsed) % 60], panel.position.y + 261.0, 18, Color(0.7, 0.79, 0.92))
-	_draw_centered("CLICK / TAP / ENTER TO RETRY", panel.position.y + 351.0, 17, Color(0.35, 0.84, 1.0))
+	canvas.draw_rect(panel, Color(0.02, 0.035, 0.09, 0.96), true)
+	canvas.draw_rect(panel, Color(0.24, 0.8, 1.0, 0.45) if victory else Color(1.0, 0.22, 0.38, 0.5), false, 3.0)
+	_draw_centered(canvas, "MISSION COMPLETE" if victory else "SHIP LOST", panel.position.y + 76.0, 34, Color(0.64, 0.94, 1.0) if victory else Color(1.0, 0.5, 0.58))
+	_draw_centered(canvas, _format_score(score), panel.position.y + 144.0, 44, Color.WHITE)
+	_draw_centered(canvas, "FINAL SCORE", panel.position.y + 173.0, 13, Color(0.45, 0.56, 0.75))
+	_draw_centered(canvas, "GRAZES  %03d" % graze_count, panel.position.y + 226.0, 18, Color(0.7, 0.79, 0.92))
+	_draw_centered(canvas, "TIME  %02d:%02d" % [int(elapsed / 60.0), int(elapsed) % 60], panel.position.y + 261.0, 18, Color(0.7, 0.79, 0.92))
+	_draw_centered(canvas, "CLICK / TAP / ENTER TO RETRY", panel.position.y + 351.0, 17, Color(0.35, 0.84, 1.0))
 
 
-func _draw_text(text: String, pos: Vector2, size: int, color: Color) -> void:
-	draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
+func _draw_text(canvas: Node2D, text: String, pos: Vector2, size: int, color: Color) -> void:
+	canvas.draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
 
 
-func _draw_centered(text: String, y: float, size: int, color: Color) -> void:
+func _draw_centered(canvas: Node2D, text: String, y: float, size: int, color: Color) -> void:
 	var width := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
-	draw_string(font, Vector2((screen_size.x - width) * 0.5, y), text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
+	canvas.draw_string(font, Vector2((screen_size.x - width) * 0.5, y), text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, color)
 
 
 func _format_score(value: int) -> String:
