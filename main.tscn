@@ -25,13 +25,13 @@ script = ExtResource("1_main")
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
 environment = SubResource("Environment_vfx")
 
-[node name="Flares" type="Node2D" parent="."]
-z_index = -1
-script = ExtResource("2_flares")
-
 [node name="Fire" type="Node2D" parent="."]
 z_index = -1
 script = ExtResource("5_fire")
+
+[node name="Flares" type="Node2D" parent="."]
+z_index = -1
+script = ExtResource("2_flares")
 
 [node name="Backdrop" type="Node2D" parent="."]
 z_index = -3

@@ -1071,7 +1071,7 @@ func _draw_background(canvas: Node2D) -> void:
 	var background_size := texture_size * cover_scale
 	var drift := Vector2(sin(elapsed * 0.07) * 6.0, sin(elapsed * 0.045) * 9.0)
 	var background_rect := Rect2((screen_size - background_size) * 0.5 + drift, background_size)
-	canvas.draw_texture_rect(background, background_rect, false, Color(0.82, 0.86, 0.9, 1.0))
+	canvas.draw_texture_rect(background, background_rect, false, Color(0.55, 0.66, 0.74, 1.0))
 	# Reserve the brightest values for live bullets, impacts, and the player beam.
 	canvas.draw_rect(Rect2(Vector2.ZERO, screen_size), Color(0.008, 0.015, 0.035, 0.23))
 	EnvironmentVisual.draw_layers(self, canvas)

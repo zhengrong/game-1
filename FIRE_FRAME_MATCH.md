@@ -35,7 +35,7 @@ The warm ring is an observed impact effect; the footage alone does not establish
 - Fragment smoke retains the sampled path after the hot head expires, then disperses for up to 550 ms. Smoke age remains continuous through that transition, and long updates cannot resurrect expired particles.
 - Cooling fire develops irregular boundary tongues and small gaps; hull smoke uses three drifting lobes. These aftermath choices are tuning decisions: the supplied clip ends before the main hull fire goes out.
 - Added blue-white energy impacts and slower-growing pink-white bursts, with fine radial rays and matching translucent shells. Normal gameplay uses blue on shield breaks and pink on Nova; those mappings are adaptations, not claims about Phoenix 2 mechanics. The helper changes presentation only and consumes no gameplay randomness.
-- The fire material uses a separate additive canvas below hostile projectiles and HUD.
+- The fire material uses a separate HDR canvas below hostile projectiles and HUD. Flame bodies now alpha-composite; optical flares remain additive.
 
 ## Reproduce
 
@@ -68,3 +68,30 @@ The enlarged pink-white core is closer in scale to the clip than the first star-
 Press V in normal play to select the twin-shot profile. It emits two blue-white blades with electric tails, at 44 px separation and a 280 ms interval. Initial speed is 2100 px/s. These are tuning values, not exact measurements of the original. Swept collision chooses the nearest surface, respects shields/turrets and avoids tunneling during large updates. Damage tuning has not been balance-tested.
 
 Hostile projectiles use CanvasLayer 1 and the interface uses layer 2, outside the world environment canvas limit of 0. See [Godot glow/canvas documentation](https://docs.godotengine.org/en/4.6/tutorials/3d/environment_and_post_processing.html) and [segment-circle collision documentation](https://docs.godotengine.org/en/4.4/classes/class_geometry2d.html). Captures, not layer numbers alone, determine whether contrast is acceptable.
+
+## Fire compositing correction (September 22)
+
+The former additive flame bodies clipped overlapping hull fire to a nearly solid
+white patch. Fire bodies now alpha-composite HDR emission, retaining orange folds
+and yellow channels as billows overlap. Only the hottest local regions approach
+white; the separate ignition and optical-flare pass still provides the brief
+impact flash. The optical-flare canvas now draws after the fire canvas so opaque
+flame bodies cannot cover ignition. Advected channels and cooling folds shape the interior as well as
+the silhouette. This is a renderer correction, not a new gameplay effect.
+
+The blast shell now has a broader, dimmer rim with subtle spatial variation.
+Background modulation was reduced from (0.82, 0.86, 0.90) to (0.55, 0.66, 0.74),
+giving combat effects more contrast without changing the background asset.
+Enemy bullets remain in their protected foreground layer.
+
+Use `tools/review_fire_detail.py` after the reference capture to produce a fixed
+crop contact sheet and white-pixel diagnostic. It expects saved baseline frames
+0/12/30/60 in `visual-reports/fire-before/`; those baseline captures are local
+review artifacts, not shipped assets. All rows use the same crop and reference
+scale. The white-pixel statistic diagnoses clipping only: lower is not necessarily
+closer to Phoenix 2, which also has deliberately saturated highlights.
+
+Remaining differences include the reference's wider, asymmetric flame silhouette,
+shot and enemy motion, smoke integration, secondary energy-burst shape, ship art,
+and environment. This pass does not establish full visual parity or iPhone frame
+time.
