@@ -1014,7 +1014,10 @@ func _spawn_explosion(origin: Vector2, color: Color, count: int, speed: float) -
 
 
 func _update_particles(delta: float) -> void:
-	for i in range(particles.size() - 1, -1, -1):
+	# Stable compaction preserves transparent draw order without shifting the
+	# remaining array for every expired particle. This pass never spawns particles.
+	var alive := 0
+	for i in range(particles.size()):
 		var particle := particles[i]
 		var previous: Vector2 = particle["pos"]
 		particle["life"] -= delta
@@ -1022,8 +1025,10 @@ func _update_particles(delta: float) -> void:
 			FireVisual.advance_fragment(particle)
 			FireVisual.update_trail(particle, previous, delta)
 		else:
-			particle["pos"] += particle["vel"] * delta
-			particle["vel"] *= pow(particle["drag"], delta)
+			var velocity: Vector2 = particle["vel"]
+			if velocity != Vector2.ZERO:
+				particle["pos"] += velocity * delta
+				particle["vel"] = velocity * pow(particle["drag"], delta)
 			var source: Dictionary = particle.get("source", {})
 			if not source.is_empty():
 				var age: float = particle["max_life"] - particle["life"]
@@ -1042,8 +1047,11 @@ func _update_particles(delta: float) -> void:
 			particle["max_life"] = 0.55
 			particle["vel"] = Vector2.ZERO
 			particle["growth"] = 5.0
-		if particle["life"] <= 0.0:
-			particles.remove_at(i)
+		if particle["life"] > 0.0:
+			if alive != i:
+				particles[alive] = particle
+			alive += 1
+	particles.resize(alive)
 
 
 func _update_shockwaves(delta: float) -> void:

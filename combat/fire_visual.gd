@@ -54,6 +54,8 @@ static func draw_smoke(canvas: Node2D, particle: Dictionary) -> void:
 		var trail: PackedVector2Array = particle["trail"]
 		var wake: bool = particle["kind"] == "ember_wake"
 		var cooling := ratio if wake else (1.0 - energy)
+		if cooling <= 0.0:
+			return
 		for i in range(0, trail.size(), 3):
 			var freshness := float(i + 1) / maxf(1.0, trail.size())
 			var drift := Vector2(sin(i + age * 2.0) * age * 6.0, -age * 18.0)
@@ -61,6 +63,8 @@ static func draw_smoke(canvas: Node2D, particle: Dictionary) -> void:
 			puff(canvas, SMOKE, trail[i] + drift, Vector2(spread, spread * 1.3), Color(0.26, 0.23, 0.20, cooling * 0.32))
 		return
 	var opacity := (1.0 - energy) * minf(1.0, ratio * 5.0) * 0.45
+	if opacity <= 0.0:
+		return
 	var center: Vector2 = particle["pos"] + Vector2(0, -age * 28.0)
 	var size := radius * (3.4 + age * 3.0)
 	for lobe in range(3):

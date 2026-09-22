@@ -21,6 +21,8 @@ func _draw() -> void:
 		if particle["kind"] == "ember":
 			var trail: PackedVector2Array = particle["trail"]
 			var energy: float = game.FireVisual.heat(particle) * (0.25 if game.paused else 1.0)
+			if energy <= 0.0:
+				continue
 			var age: float = particle["max_life"] - particle["life"]
 			for i in range(trail.size()):
 				var freshness := float(i + 1) / maxf(1.0, trail.size())
@@ -34,13 +36,15 @@ func _draw() -> void:
 			draw_texture_rect(QUAD, Rect2(particle["pos"] - head_size * 0.5, head_size), false, Color(age, 0.0, 1.0, energy))
 		if particle["kind"] != "fire":
 			continue
+		var opacity: float = game.FireVisual.heat(particle) * (0.25 if game.paused else 1.0)
+		if opacity <= 0.0:
+			continue
 		var age: float = particle["max_life"] - particle["life"]
 		var burst: bool = particle.get("burst", false)
 		var radius: float = particle["size"]
 		var expansion := lerpf(0.65, 1.0, smoothstep(0.0, 0.10, age)) if burst else 1.0
 		var size := Vector2(6.0, 5.6) * radius * expansion if burst else Vector2(6.2, 7.6) * radius
 		var center: Vector2 = particle["pos"] + Vector2(0.0, 0.0 if burst else -radius * 0.75)
-		var opacity: float = game.FireVisual.heat(particle) * (0.25 if game.paused else 1.0)
 		var lean := 0.0 if burst else 0.32 + sin(age * 3.0 + particle.get("seed", 0.0)) * 0.10
 		draw_set_transform(center, lean)
 		draw_texture_rect(QUAD, Rect2(-size * 0.5, size), false, Color(age, particle.get("seed", 0.0), 1.0 if burst else 0.0, opacity))

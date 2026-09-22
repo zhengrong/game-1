@@ -694,3 +694,29 @@ func test_render_boss_pause_and_dead_player() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	assert_eq(game.player_hp, 0)
+
+func test_particle_compaction_preserves_order_and_motion() -> void:
+	game.particles.clear()
+	var survivors: Array[Dictionary] = []
+	for i in range(100):
+		var particle := {"kind": "fire", "pos": Vector2(i, 10),
+			"vel": Vector2(12, -6) if i % 2 == 0 else Vector2.ZERO,
+			"life": 0.01 if i % 3 == 0 else 1.0, "max_life": 1.0,
+			"size": 20.0, "growth": 5.0, "drag": 0.1, "id": i}
+		game.particles.append(particle)
+		if i % 3 != 0:
+			survivors.append(particle)
+	game._update_particles(0.1)
+	assert_eq(game.particles.size(), survivors.size())
+	for i in range(survivors.size()):
+		var particle: Dictionary = game.particles[i]
+		var identifier: int = survivors[i]["id"]
+		assert_eq(particle["id"], identifier, "Expiry must preserve compositing order")
+		var velocity := Vector2(12, -6) if identifier % 2 == 0 else Vector2.ZERO
+		assert_almost_eq(particle["pos"], Vector2(identifier, 10) + velocity * 0.1, Vector2.ONE * 0.0001)
+		assert_almost_eq(particle["vel"], velocity * pow(0.1, 0.1), Vector2.ONE * 0.0001)
+		assert_almost_eq(particle["life"], 0.9, 0.0001, "Every survivor advances exactly once")
+	game._update_particles(2.0)
+	assert_true(game.particles.is_empty())
+	game._update_particles(0.1)
+	assert_true(game.particles.is_empty(), "An empty particle pass is safe")
