@@ -33,6 +33,9 @@ func capture() -> void:
 	game.player_pos = Vector2(360, 880)
 	game.shields.reset(game.ship_definition.shields, game.player_pos)
 	game.shields.deploy(100, 100)
+	game.shields.advance(0.3, game.player_pos, false)
+	game.shields.intercept(game.player_pos - Vector2(0, 120), game.player_pos, 0.0)
+	game.shields.advance(0.08, game.player_pos, false)
 	await save(game, "phalanx")
 	game.shields.fields[0]["strength"] = 2.0
 	await save(game, "phalanx-weak")

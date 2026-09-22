@@ -2,6 +2,7 @@ extends RefCounted
 const Config = preload("res://shields/shield_config.gd")
 var config: Config = Config.new()
 var fields: Array[Dictionary] = []
+var visual_time: float = 0.0
 var personal: float = 0.0
 var fade: float = 0.0
 var charge: float = 0.0
@@ -13,6 +14,7 @@ var aura_held: bool = false
 var flashes: Array[Dictionary] = []
 
 func reset(settings: Config, origin: Vector2) -> void:
+	visual_time = 0.0
 	config = settings
 	fields.clear()
 	flashes.clear()
@@ -26,6 +28,7 @@ func reset(settings: Config, origin: Vector2) -> void:
 	previous_position = origin
 
 func advance(delta: float, origin: Vector2, zen_held: bool) -> void:
+	visual_time += delta
 	previous_position = position
 	position = origin
 	fade = maxf(0.0, fade - delta)
@@ -53,6 +56,7 @@ func advance(delta: float, origin: Vector2, zen_held: bool) -> void:
 			penalty = maxf(0.0, penalty - delta * config.personal_penalty / maxf(0.001, config.personal_recovery))
 	for i in range(fields.size() - 1, -1, -1):
 		var field := fields[i]
+		field["age"] = field.get("age", 0.0) + delta
 		if field["fading"]:
 			field["fade"] -= delta
 			if field["fade"] <= 0.0:
@@ -82,7 +86,7 @@ func deploy(energy: float, capacity: float) -> float:
 			if fields[i]["kind"] == Config.Aura.PHALANX:
 				fields.remove_at(i)
 	var strength := config.phalanx_strength if phalanx else config.barrier_strength
-	fields.append({"kind": config.aura, "center": position, "radius": config.phalanx_radius if phalanx else config.barrier_radius * clampf(energy / maxf(0.001, capacity), 0.1, 1.0), "strength": strength, "maximum": strength, "fading": false, "fade": config.phalanx_fade if phalanx else config.barrier_fade})
+	fields.append({"age": 0.0, "kind": config.aura, "center": position, "radius": config.phalanx_radius if phalanx else config.barrier_radius * clampf(energy / maxf(0.001, capacity), 0.1, 1.0), "strength": strength, "maximum": strength, "fading": false, "fade": config.phalanx_fade if phalanx else config.barrier_fade})
 	return cost
 
 func _break_if_empty(field: Dictionary) -> void:
@@ -138,5 +142,9 @@ func intercept(start: Vector2, end: Vector2, radius: float, laser: bool = false,
 	if not chosen.is_empty() and not chosen["fading"]:
 		chosen["strength"] -= config.laser_drain * delta if laser else (3.0 if missile else 1.0)
 		_break_if_empty(chosen)
-	flashes.append({"pos": point, "life": 0.12})
+	# Keep effects bounded under sustained lasers; store local coordinates for mobile shields.
+	if flashes.size() >= 48:
+		flashes.pop_front()
+	var mobile_hit: bool = personal_hit or chosen.get("kind", -1) == Config.Aura.PHALANX
+	flashes.append({"pos": point, "offset": point - position, "mobile": mobile_hit, "life": 0.32})
 	return {"point": point, "reflect": personal_hit and laser and config.reflect_lasers}

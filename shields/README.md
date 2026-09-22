@@ -47,6 +47,16 @@ Lasers stop at the first shield surface; reflected damage is deferred until afte
 enemy iteration, preventing removal from invalidating that loop. Personal Shield
 protection includes its exit fade. Timers account for overshoot on long frames.
 
+## Visual presentation
+
+Shields use translucent animated membrane cells, layered edge glow, an inward
+filament and an expanding deployment front. Phalanx keeps its forward silhouette
+and illuminated tips. Weakening changes color; breaking fragments the rim into
+outward sparks. Hits create two expanding ripples, with mobile-shield impacts
+following the ship. Visual time advances with simulation, so pause freezes it.
+Impact effects are capped at 48 and expire after 0.32 seconds. Rendering uses no
+random sampling and does not modify collision boundaries or gameplay state.
+
 ## Remaining fidelity gaps
 
 This is a functional reference implementation, **not verified frame-for-frame

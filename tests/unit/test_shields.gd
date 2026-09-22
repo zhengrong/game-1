@@ -40,7 +40,7 @@ func test_break_fade_then_removal_and_laser_drain() -> void:
 		system.intercept(Vector2(0, -100), Vector2.ZERO, 0.0, false, 0.0, true)
 	assert_true(system.fields[0]["fading"], "Eight MIRVs exhaust a level-one Phalanx")
 	assert_false(system.intercept(Vector2(0, -100), Vector2.ZERO, 0.0).is_empty(), "Fade still clears bullets")
-	system.advance(0.31, Vector2.ZERO, false)
+	system.advance(0.35, Vector2.ZERO, false)
 	assert_true(system.fields.is_empty())
 	assert_true(system.flashes.is_empty())
 	system.deploy(100.0, 100.0)
@@ -94,3 +94,19 @@ func test_large_steps_do_not_resurrect_expired_shields() -> void:
 		for frame in range(fps):
 			system.advance(1.0 / fps, Vector2.ZERO, true)
 		assert_almost_eq(system.personal, 2.1, 0.00001, "Charging overshoot must carry into shield duration")
+
+func test_visual_hits_are_bounded_follow_mobile_shields_and_expire() -> void:
+	var system = make_system(Config.Aura.PHALANX)
+	system.deploy(100.0, 100.0)
+	for i in range(100):
+		system.intercept(Vector2(0, -100), Vector2.ZERO, 0.0, true, 0.0)
+	assert_eq(system.flashes.size(), 48)
+	assert_true(system.flashes[0]["mobile"])
+	var offset: Vector2 = system.flashes[0]["offset"]
+	system.advance(0.1, Vector2(20, 30), false)
+	assert_eq(system.flashes[0]["offset"], offset)
+	assert_almost_eq(system.visual_time, 0.1, 0.001)
+	system.advance(0.3, Vector2(20, 30), false)
+	assert_true(system.flashes.is_empty())
+	system.reset(system.config, Vector2.ZERO)
+	assert_eq(system.visual_time, 0.0)
