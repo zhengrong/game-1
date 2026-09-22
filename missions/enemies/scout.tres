@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="" load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://missions/enemy_definition.gd" id="1"]
+
+[ext_resource type="Resource" path="res://missions/movements/scout.tres" id="move"]
+[ext_resource type="Resource" path="res://missions/weapons/scout.tres" id="weapon"]
+
+[resource]
+script = ExtResource("1")
+kind = "scout"
+movement = ExtResource("move")
+weapon = ExtResource("weapon")

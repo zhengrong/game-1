@@ -1,0 +1,69 @@
+[gd_resource type="Resource" load_steps=16 format=3]
+
+[ext_resource type="Script" path="res://missions/mission_definition.gd" id="mission"]
+[ext_resource type="Script" path="res://missions/stage_definition.gd" id="stage"]
+[ext_resource type="Script" path="res://missions/spawn_group.gd" id="group"]
+[ext_resource type="Resource" path="res://missions/enemies/scout.tres" id="scout"]
+[ext_resource type="Resource" path="res://missions/enemies/spinner.tres" id="spinner"]
+[ext_resource type="Resource" path="res://missions/enemies/heavy.tres" id="heavy"]
+[ext_resource type="Resource" path="res://missions/enemies/boss.tres" id="boss"]
+
+[sub_resource type="Resource" id="group0"]
+script = ExtResource("group")
+enemies = [ExtResource("scout")]
+count = 10
+start_time = 0.15
+interval = 0.72
+formation = PackedFloat32Array(0.18333333333333332, 0.6583333333333333, 0.5, 0.3416666666666667, 0.8166666666666667, 0.8166666666666667, 0.3416666666666667, 0.5, 0.6583333333333333, 0.18333333333333335)
+
+[sub_resource type="Resource" id="stage0"]
+script = ExtResource("stage")
+title = "FIRST CONTACT"
+groups = [SubResource("group0")]
+completion = 0
+
+[sub_resource type="Resource" id="group1"]
+script = ExtResource("group")
+enemies = [ExtResource("scout"), ExtResource("spinner"), ExtResource("spinner")]
+count = 13
+start_time = 0.15
+interval = 0.62
+formation = PackedFloat32Array(0.18333333333333332, 0.6583333333333333, 0.5, 0.3416666666666667, 0.8166666666666667, 0.8166666666666667, 0.3416666666666667, 0.5, 0.6583333333333333, 0.18333333333333335)
+
+[sub_resource type="Resource" id="stage1"]
+script = ExtResource("stage")
+title = "CROSSFIRE"
+groups = [SubResource("group1")]
+completion = 0
+
+[sub_resource type="Resource" id="group2"]
+script = ExtResource("group")
+enemies = [ExtResource("heavy"), ExtResource("scout"), ExtResource("spinner"), ExtResource("scout")]
+count = 17
+start_time = 0.15
+interval = 0.52
+formation = PackedFloat32Array(0.5, 0.23, 0.77, 0.5)
+
+[sub_resource type="Resource" id="stage2"]
+script = ExtResource("stage")
+title = "BREAK THE LINE"
+groups = [SubResource("group2")]
+completion = 0
+
+[sub_resource type="Resource" id="group3"]
+script = ExtResource("group")
+enemies = [ExtResource("boss")]
+count = 1
+start_time = 0.0
+interval = 1.0
+formation = PackedFloat32Array(0.5)
+
+[sub_resource type="Resource" id="stage3"]
+script = ExtResource("stage")
+title = "DREADNOUGHT INBOUND"
+groups = [SubResource("group3")]
+completion = 1
+
+[resource]
+script = ExtResource("mission")
+stages = [SubResource("stage0"), SubResource("stage1"), SubResource("stage2"), SubResource("stage3")]

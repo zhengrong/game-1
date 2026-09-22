@@ -548,8 +548,10 @@ func test_wave_break_rewards_and_completion() -> void:
 	game._update_spawner(0.6)
 	assert_eq(game.wave, 1)
 	assert_eq(game.wave_goal, 10)
-	game.wave_spawned = game.wave_goal
-	game.wave_break = 0.0
+	game._update_spawner(10.0)
+	for enemy in game.enemies:
+		game.mission.enemy_removed(enemy["mission_token"], true)
+	game.enemies.clear()
 	game.enemy_bullets.append(bullet(Vector2(20, 20)))
 	game.aura_energy = 0.0
 	game.nova_energy = 0.0
@@ -720,3 +722,32 @@ func test_particle_compaction_preserves_order_and_motion() -> void:
 	assert_true(game.particles.is_empty())
 	game._update_particles(0.1)
 	assert_true(game.particles.is_empty(), "An empty particle pass is safe")
+
+func test_custom_mission_boss_is_not_automatic_victory() -> void:
+	var definition = preload("res://missions/mission_definition.gd").new()
+	definition.initial_delay = 0.0
+	for kind in ["boss", "scout"]:
+		var stage = preload("res://missions/stage_definition.gd").new()
+		stage.transition_delay = 0.0
+		var group = preload("res://missions/spawn_group.gd").new()
+		group.enemies.append(load("res://missions/enemies/%s.tres" % kind))
+		group.start_time = 0.0
+		stage.groups.append(group)
+		definition.stages.append(stage)
+	game.mission_definition = definition
+	game.start_game()
+	game._update_spawner(0.0)
+	game._update_spawner(0.0)
+	assert_eq(game.enemies[0]["kind"], "boss")
+	game._destroy_enemy(0)
+	assert_eq(game.state, game.GameState.PLAYING, "Intermediate bosses cannot end the mission")
+	game._check_wave_complete()
+	game._update_spawner(0.0)
+	game._update_spawner(0.0)
+	assert_eq(game.wave, 2)
+	assert_eq(game.enemies[0]["kind"], "scout")
+	game._destroy_enemy(0)
+	game._check_wave_complete()
+	assert_eq(game.state, game.GameState.VICTORY)
+	game.start_encounter_preview()
+	assert_eq(game.enemies[0]["kind"], "heavy", "Preview does not depend on mission stage count")

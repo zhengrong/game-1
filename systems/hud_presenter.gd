@@ -12,6 +12,8 @@ var twin_shots := false
 var score := 0
 var encounter_preview := false
 var wave := 0
+var stage_count := 4
+var stage_title := ""
 var elapsed := 0.0
 var player_hp := 3
 var enemies: Array[Dictionary] = []
@@ -62,9 +64,9 @@ func _draw_hud(canvas: Node2D) -> void:
 	canvas.draw_rect(Rect2(Vector2.ZERO, Vector2(screen_size.x, 86.0)), Color(0.006, 0.012, 0.04, 0.72))
 	_draw_text(canvas, "SCORE", Vector2(22.0, 27.0), 13, Color(0.42, 0.56, 0.75))
 	_draw_text(canvas, _format_score(score), Vector2(22.0, 57.0), 25, Color(0.9, 0.97, 1.0))
-	_draw_centered(canvas, "TURRET TRIAL" if encounter_preview else "WAVE %d/4" % mini(wave, 4), 27.0, 16, Color(0.52, 0.82, 1.0))
+	_draw_centered(canvas, "TURRET TRIAL" if encounter_preview else "WAVE %d/%d" % [mini(wave, stage_count), stage_count], 27.0, 16, Color(0.52, 0.82, 1.0))
 	_draw_centered(canvas, "%02d:%05.2f" % [int(elapsed / 60.0), fmod(elapsed, 60.0)], 52.0, 17, Color(0.85, 0.93, 1.0))
-	for step in range(4):
+	for step in range(stage_count):
 		var c := Color(0.15, 0.8, 1.0) if step < wave else Color(0.16, 0.21, 0.3)
 		canvas.draw_line(Vector2(screen_size.x * 0.5 - 42 + step * 22, 70), Vector2(screen_size.x * 0.5 - 26 + step * 22, 70), c, 3.0)
 
@@ -73,7 +75,7 @@ func _draw_hud(canvas: Node2D) -> void:
 		var c := Color(0.25, 0.9, 1.0) if i < player_hp else Color(0.16, 0.2, 0.29)
 		canvas.draw_circle(Vector2(screen_size.x - 91.0 + i * 28.0, 55.0), 8.0, c)
 
-	if wave == 4 and not enemies.is_empty():
+	if not enemies.is_empty():
 		for enemy in enemies:
 			if enemy["kind"] == "boss":
 				var bar_rect := Rect2(Vector2(80.0, 101.0), Vector2(screen_size.x - 160.0, 12.0))
@@ -93,8 +95,8 @@ func _draw_hud(canvas: Node2D) -> void:
 		_draw_centered(canvas, "BREAK SHIELD · AIM AT SIDE TURRETS", 119.0, 14, Color(0.55, 0.85, 1.0))
 		_draw_centered(canvas, "PULSE CLEARS BULLETS · DODGE LASERS", 145.0, 12, Color(0.85, 0.65, 0.42))
 	if wave_banner > 0.0:
-		var title := "FINAL WAVE" if wave == 4 else "WAVE %d" % wave
-		var subtitle: String = "DREADNOUGHT INBOUND" if wave == 4 else ["", "FIRST CONTACT", "CROSSFIRE", "BREAK THE LINE"][wave]
+		var title := "FINAL WAVE" if wave == stage_count else "WAVE %d" % wave
+		var subtitle: String = stage_title
 		var alpha := minf(1.0, wave_banner * 1.4)
 		_draw_centered(canvas, title, screen_size.y * 0.19, 28, Color(0.82, 0.95, 1.0, alpha))
 		_draw_centered(canvas, subtitle, screen_size.y * 0.19 + 28.0, 13, Color(0.34, 0.78, 1.0, alpha))

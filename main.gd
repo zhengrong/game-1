@@ -40,6 +40,13 @@ const FIREBALL_TEXTURE: Texture2D = preload("res://assets/effects/fireball.png")
 const SMOKE_TEXTURE: Texture2D = preload("res://assets/effects/smoke.png")
 const BATTLEFIELD_BACKGROUND: Texture2D = preload("res://assets/backgrounds/amber_megastructure_hd.png")
 
+const EnemyMovement = preload("res://combat/enemy_movement.gd")
+var enemy_weapons = preload("res://combat/enemy_weapons.gd").new()
+const EnemyFactory = preload("res://missions/enemy_factory.gd")
+const MissionDefinition = preload("res://missions/mission_definition.gd")
+@export var mission_definition: MissionDefinition = preload("res://missions/industrial_assault.tres")
+var mission = preload("res://missions/mission_runner.gd").new()
+
 var weapon = preload("res://combat/weapon_cycle.gd").new()
 var effects = preload("res://systems/effects_system.gd").new()
 var audio = preload("res://systems/game_audio.gd").new()
@@ -93,11 +100,9 @@ var graze_count := 0
 var wave := 0
 var wave_spawned := 0
 var wave_goal := 0
-var spawn_timer := 0.0
 var wave_break := 0.0
 var wave_banner := 0.0
 var elapsed := 0.0
-var boss_spawned := false
 var mission_complete_timer := 0.0
 
 var pointer_active := false
@@ -151,6 +156,15 @@ var sound_pool: Array[AudioStreamPlayer]:
 
 
 func _ready() -> void:
+	enemy_weapons.aimed.connect(_fire_aimed)
+	enemy_weapons.fan.connect(_fire_fan)
+	enemy_weapons.radial.connect(_fire_radial)
+	enemy_weapons.missile.connect(func(origin): enemy_bullets.append(Missile.create(origin, player_pos)))
+	mission.spawn_requested.connect(_spawn_mission_enemy)
+	mission.stage_started.connect(_on_stage_started)
+	mission.stage_cleared.connect(_on_stage_cleared)
+	mission.completed.connect(_on_mission_completed)
+	mission.failed.connect(func(): state = GameState.GAME_OVER)
 	weapon.damage_requested.connect(_fire_player_weapon)
 	weapon.beam_started.connect(_on_beam_started)
 	weapon.twin_requested.connect(_spawn_twin_shots)
@@ -208,6 +222,7 @@ func _create_stars() -> void:
 
 
 func start_game() -> void:
+	mission.reset(mission_definition)
 	state = GameState.PLAYING
 	enemies.clear()
 	player_bullets.clear()
@@ -237,11 +252,9 @@ func start_game() -> void:
 	wave = 0
 	wave_spawned = 0
 	wave_goal = 0
-	spawn_timer = 0.0
 	wave_break = 0.55
 	wave_banner = 0.0
 	elapsed = 0.0
-	boss_spawned = false
 	mission_complete_timer = 0.0
 	paused = false
 	flash = 0.0
@@ -422,109 +435,50 @@ func _update_beam_visual(_delta: float) -> void:
 
 
 func _update_spawner(delta: float) -> void:
-	if wave_break > 0.0:
-		wave_break -= delta
-		if wave_break <= 0.0:
-			_begin_next_wave()
-		return
-
-	if wave >= 1 and wave <= 3 and wave_spawned < wave_goal:
-		spawn_timer -= delta
-		if spawn_timer <= 0.0:
-			_spawn_wave_enemy()
-			wave_spawned += 1
-			spawn_timer = [0.0, 0.72, 0.62, 0.52][wave]
-	elif wave == 4 and not boss_spawned:
-		_spawn_boss()
-		boss_spawned = true
+	mission.advance(delta)
+	wave_spawned = mission.spawned
+	wave_break = mission.waiting if mission.transitioning else 0.0
 
 
-func _begin_next_wave() -> void:
-	wave += 1
+func _on_stage_started(index: int) -> void:
+	wave = index + 1
 	wave_spawned = 0
 	wave_banner = 2.2
-	spawn_timer = 0.15
-	match wave:
-		1:
-			wave_goal = 10
-		2:
-			wave_goal = 13
-		3:
-			wave_goal = 17
-		4:
-			wave_goal = 1
-		_:
-			wave_goal = 0
+	wave_goal = 0
+	for group in mission_definition.stages[index].groups:
+		wave_goal += group.count
+
+
+func _spawn_mission_enemy(definition: Resource, x_fraction: float, token: int) -> void:
+	var enemy := EnemyFactory.create(definition, screen_size.x * x_fraction, rng)
+	enemy["mission_token"] = token
+	enemies.append(enemy)
+	if definition.kind == "boss":
+		play_sound("warning")
 
 
 func _spawn_wave_enemy() -> void:
-	var kind := "scout"
-	if wave == 2:
-		kind = "spinner" if wave_spawned % 3 != 0 else "scout"
-	elif wave == 3:
-		kind = "heavy" if wave_spawned % 4 == 0 else ("spinner" if wave_spawned % 2 == 0 else "scout")
-
-	var radius := 24.0
-	var hp := 55.0
-	var value := 650
-	var speed := 70.0
-	match kind:
-		"spinner":
-			radius = 29.0
-			hp = 92.0
-			value = 1050
-			speed = 54.0
-		"heavy":
-			radius = 41.0
-			hp = 340.0
-			value = 1900
-			speed = 38.0
-
-	var lane_count := 5 if wave < 3 else 6
-	var lane := wave_spawned % lane_count
-	var x := lerpf(75.0, screen_size.x - 75.0, (float(lane) + 0.5) / float(lane_count))
-	if wave_spawned % 2 == 1:
-		x = screen_size.x - x
-	if wave == 3:
-		var formation := [0.5, 0.23, 0.77, 0.5]
-		x = screen_size.x * float(formation[wave_spawned % 4])
-	enemies.append({
-		"kind": kind,
-		"pos": Vector2(x, -radius - 20.0),
-		"vel": Vector2(0.0, speed),
-		"hp": hp,
-		"max_hp": hp,
-		"radius": radius,
-		"value": value,
-		"age": 0.0,
-		"phase": rng.randf_range(0.0, TAU_F),
-		"fire": rng.randf_range(0.5, 1.2),
-		"anchor_x": x,
-		"hit_flash": 0.0,
-		"damage_tick": rng.randf_range(0.02, 0.12),
-	})
-	if kind == "heavy":
-		HeavyEnemy.equip(enemies.back())
+	# Preview/test adapter reads the same content as the mission scheduler.
+	var group = mission_definition.stages[wave - 1].groups[0]
+	var definition = group.enemies[wave_spawned % group.enemies.size()]
+	var x: float = group.formation[wave_spawned % group.formation.size()]
+	enemies.append(EnemyFactory.create(definition, screen_size.x * x, rng))
 
 
 func _spawn_boss() -> void:
-	var hp := 1750.0
-	enemies.append({
-		"kind": "boss",
-		"pos": Vector2(screen_size.x * 0.5, -130.0),
-		"vel": Vector2(0.0, 62.0),
-		"hp": hp,
-		"max_hp": hp,
-		"radius": 92.0,
-		"value": 25000,
-		"age": 0.0,
-		"phase": 0.0,
-		"fire": 1.25,
-		"anchor_x": screen_size.x * 0.5,
-		"hit_flash": 0.0,
-		"damage_tick": 0.0,
-	})
+	enemies.append(EnemyFactory.create(preload("res://missions/enemies/boss.tres"), screen_size.x * 0.5, rng))
 	play_sound("warning")
+
+
+func _on_stage_cleared() -> void:
+	wave_break = mission.waiting
+	_clear_all_enemy_bullets(true)
+	aura_energy = minf(MAX_AURA, aura_energy + 28.0)
+	nova_energy = minf(MAX_NOVA, nova_energy + 18.0)
+
+
+func _on_mission_completed() -> void:
+	state = GameState.VICTORY
 
 
 func _update_enemies(delta: float) -> void:
@@ -535,36 +489,11 @@ func _update_enemies(delta: float) -> void:
 		enemy["hit_flash"] = maxf(0.0, enemy["hit_flash"] - delta * 5.8)
 		enemy["damage_tick"] -= delta
 		var kind: String = enemy["kind"]
-		match kind:
-			"scout":
-				enemy["pos"].y += enemy["vel"].y * delta
-				enemy["pos"].x = enemy["anchor_x"] + sin(enemy["age"] * 1.8 + enemy["phase"]) * 52.0
-				if enemy["pos"].y > 205.0:
-					enemy["vel"].y = move_toward(enemy["vel"].y, 13.0, delta * 45.0)
-				if enemy["fire"] <= 0.0:
-					_fire_aimed(enemy["pos"], 265.0, Color(1.0, 0.11, 0.025), 6.0)
-					enemy["fire"] = rng.randf_range(1.25, 1.8)
-			"spinner":
-				enemy["pos"].y += enemy["vel"].y * delta
-				enemy["pos"].x = enemy["anchor_x"] + sin(enemy["age"] * 1.25 + enemy["phase"]) * 78.0
-				if enemy["pos"].y > 270.0:
-					enemy["vel"].y = move_toward(enemy["vel"].y, 5.0, delta * 34.0)
-				if enemy["fire"] <= 0.0:
-					if int(enemy["age"] / 1.65) % 3 == 0:
-						enemy_bullets.append(Missile.create(enemy["pos"], player_pos))
-					else:
-						_fire_radial(enemy["pos"], 9, 180.0, enemy["age"] * 0.75, Color(1.0, 0.075, 0.018), 6.5)
-					enemy["fire"] = 1.65
-			"heavy":
-				var laser: Dictionary = enemy["turrets"][1]
-				if laser["state"] not in ["locked", "firing"]:
-					enemy["pos"].y += enemy["vel"].y * delta
-					enemy["pos"].x = move_toward(enemy["pos"].x, enemy["anchor_x"] + sin(enemy["age"] * 0.75 + enemy["phase"]) * 38.0, delta * 28.0)
-				if enemy["pos"].y > 230.0:
-					enemy["vel"].y = move_toward(enemy["vel"].y, 2.0, delta * 24.0)
-				HeavyEnemy.update(self, enemy, delta)
-			"boss":
-				_update_boss(enemy, delta)
+		var ready_to_fire := EnemyMovement.advance(enemy, enemy["movement"], delta, screen_size.x)
+		if ready_to_fire:
+			enemy_weapons.fire(enemy, enemy["weapon"], rng)
+		if enemy.has("turrets"):
+			HeavyEnemy.update(self, enemy, delta)
 
 		var health_ratio: float = enemy["hp"] / enemy["max_hp"]
 		if health_ratio < 0.48 and enemy["damage_tick"] <= 0.0:
@@ -577,30 +506,13 @@ func _update_enemies(delta: float) -> void:
 			enemy["damage_tick"] = lerpf(0.13, 0.065, severity)
 
 		if enemy["pos"].y > screen_size.y + 150.0:
+			mission.enemy_removed(enemy.get("mission_token", -1), false)
 			enemies.remove_at(i)
 
 
 func _update_boss(enemy: Dictionary, delta: float) -> void:
-	if enemy["pos"].y < 195.0:
-		enemy["pos"].y += enemy["vel"].y * delta
-		return
-	enemy["pos"].x = screen_size.x * 0.5 + sin(enemy["age"] * 0.55) * screen_size.x * 0.25
-	if enemy["fire"] > 0.0:
-		return
-
-	var health_ratio: float = enemy["hp"] / enemy["max_hp"]
-	var cycle := int(enemy["age"] * 0.75) % 3
-	if cycle == 0:
-		_fire_radial(enemy["pos"] + Vector2(0.0, 42.0), 18 if health_ratio > 0.45 else 24, 205.0, enemy["age"] * 0.42, Color(1.0, 0.065, 0.015), 7.0)
-		enemy["fire"] = 0.82 if health_ratio > 0.45 else 0.58
-	elif cycle == 1:
-		_fire_fan(enemy["pos"] + Vector2(-52.0, 34.0), 7, 0.13, 285.0, Color(1.0, 0.1, 0.02), 7.0)
-		_fire_fan(enemy["pos"] + Vector2(52.0, 34.0), 7, 0.13, 285.0, Color(1.0, 0.1, 0.02), 7.0)
-		enemy["fire"] = 1.02
-	else:
-		for offset in [-58.0, 0.0, 58.0]:
-			_fire_aimed(enemy["pos"] + Vector2(offset, 38.0), 340.0, Color(1.0, 0.16, 0.025), 8.0)
-		enemy["fire"] = 0.48
+	if EnemyMovement.advance(enemy, enemy["movement"], delta, screen_size.x):
+		enemy_weapons.fire(enemy, enemy["weapon"], rng)
 
 
 func _fire_aimed(origin: Vector2, speed: float, color: Color, radius: float) -> void:
@@ -696,12 +608,14 @@ func _destroy_enemy(index: int) -> void:
 			"vel": Vector2.from_angle(rng.randf_range(0.0, TAU_F)) * rng.randf_range(30.0, 95.0),
 			"life": 7.0,
 		})
+	mission.enemy_removed(enemy.get("mission_token", -1), true)
 	enemies.remove_at(index)
 	shake = 16.0 if kind == "boss" else 5.0
 	play_sound("boss_down" if kind == "boss" else "explode")
 	if kind == "boss":
 		_clear_all_enemy_bullets(true)
-		state = GameState.VICTORY
+		if not enemy.has("mission_token"):
+			state = GameState.VICTORY
 		flash = 1.0
 		for k in range(8):
 			_spawn_explosion(Vector2(rng.randf_range(100.0, screen_size.x - 100.0), rng.randf_range(90.0, screen_size.y * 0.5)), Color.from_hsv(rng.randf(), 0.65, 1.0), 16, 240.0)
@@ -866,11 +780,7 @@ func _update_shockwaves(delta: float) -> void:
 
 func _check_wave_complete() -> void:
 	wave_banner = maxf(0.0, wave_banner - get_process_delta_time())
-	if wave >= 1 and wave <= 3 and wave_spawned >= wave_goal and enemies.is_empty() and wave_break <= 0.0:
-		wave_break = 1.8
-		_clear_all_enemy_bullets(true)
-		aura_energy = minf(MAX_AURA, aura_energy + 28.0)
-		nova_energy = minf(MAX_NOVA, nova_energy + 18.0)
+	mission.check_completion()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -1001,12 +911,13 @@ func _draw_background(canvas: Node2D) -> void:
 	canvas.draw_rect(Rect2(Vector2(-30.0, -30.0), screen_size + Vector2(60.0, 60.0)), Color(0.008, 0.012, 0.045))
 	# Preserve the source aspect ratio on both 16:9 desktop previews and tall
 	# iPhones. A small overscan leaves room for restrained camera drift.
-	var texture_size := BATTLEFIELD_BACKGROUND.get_size()
+	var background: Texture2D = mission_definition.background if mission_definition.background != null else BATTLEFIELD_BACKGROUND
+	var texture_size := background.get_size()
 	var cover_scale := maxf(screen_size.x / texture_size.x, screen_size.y / texture_size.y) * 1.025
 	var background_size := texture_size * cover_scale
 	var drift := Vector2(sin(elapsed * 0.07) * 6.0, sin(elapsed * 0.045) * 9.0)
 	var background_rect := Rect2((screen_size - background_size) * 0.5 + drift, background_size)
-	canvas.draw_texture_rect(BATTLEFIELD_BACKGROUND, background_rect, false, Color(0.82, 0.86, 0.9, 1.0))
+	canvas.draw_texture_rect(background, background_rect, false, Color(0.82, 0.86, 0.9, 1.0))
 	# Reserve the brightest values for live bullets, impacts, and the player beam.
 	canvas.draw_rect(Rect2(Vector2.ZERO, screen_size), Color(0.008, 0.015, 0.035, 0.23))
 	EnvironmentVisual.draw_layers(self, canvas)
@@ -1227,6 +1138,8 @@ func _draw_ui(canvas: Node2D) -> void:
 	hud.score = score
 	hud.encounter_preview = encounter_preview
 	hud.wave = wave
+	hud.stage_count = mission_definition.stages.size()
+	hud.stage_title = mission_definition.stages[wave - 1].title if wave > 0 and wave <= mission_definition.stages.size() else ""
 	hud.elapsed = elapsed
 	hud.player_hp = player_hp
 	hud.enemies = enemies
@@ -1276,7 +1189,7 @@ func start_encounter_preview() -> void:
 	player_target = player_pos
 	wave = 3
 	wave_spawned = 0
-	_spawn_wave_enemy()
+	enemies.append(EnemyFactory.create(preload("res://missions/enemies/heavy.tres"), screen_size.x * 0.5, rng))
 	var heavy: Dictionary = enemies.back()
 	heavy["pos"] = Vector2(screen_size.x * 0.5, 235.0)
 	heavy["hp"] = 680.0

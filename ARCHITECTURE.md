@@ -48,3 +48,16 @@ The particle CPU benchmark remains in `tests/performance/particles.gd`.
 Further work can extract enemy AI/world drawing and replace remaining dictionary
 schemas incrementally. Do not add an entity framework or per-particle scene nodes
 solely for architectural uniformity.
+
+## Missions
+
+`missions/mission_runner.gd` now owns stage scheduling, completion, and enemy
+membership. Typed Resource definitions hold mission/stage/group/archetype content;
+`EnemyFactory` creates independent runtime records. `main.gd` responds to runner
+signals and reports kills/escapes. See [mission authoring](missions/README.md).
+
+Enemy movement and hull weapons are independent typed profiles. `EnemyMovement`
+updates position from a profile; `EnemyWeapons` emits projectile requests connected
+by the coordinator. Hull kind controls appearance/rewards, and optional mounts
+retain their separate warning/fire state machines. Shared profiles contain no
+runtime timers or mutable per-enemy health.
