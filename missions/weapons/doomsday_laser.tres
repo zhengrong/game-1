@@ -4,8 +4,8 @@
 
 [resource]
 script = ExtResource("1")
-pattern = 5
-count = 12
-speed = 180.0
-cooldown = 1.65
-projectile_style = "orb"
+pattern = 8
+laser_warning = 1.5
+laser_duration = 1.8
+laser_width = 36.0
+cooldown = 5.0

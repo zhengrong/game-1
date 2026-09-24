@@ -4,8 +4,10 @@
 
 [resource]
 script = ExtResource("1")
-pattern = 5
-count = 12
-speed = 180.0
-cooldown = 1.65
-projectile_style = "orb"
+pattern = 7
+aiming = 0
+projectile_style = "dart"
+burst_count = 3
+burst_interval = 0.12
+speed = 310.0
+cooldown = 1.1

@@ -4,6 +4,12 @@ extends Node2D
 # Textured ships with procedural combat effects and synthesized audio.
 
 const CollisionQueries = preload("res://combat/collision_queries.gd")
+const Doomsday = preload("res://combat/doomsday_effect.gd")
+var doomsday_effects: Array[Dictionary] = []
+const EnemyLaser = preload("res://combat/enemy_laser.gd")
+var enemy_lasers: Array[Dictionary] = []
+const EnemyProjectile = preload("res://combat/enemy_projectile.gd")
+const EnemyBulletVisual = preload("res://combat/enemy_bullet_visual.gd")
 const Missile = preload("res://combat/missile.gd")
 const EnvironmentVisual = preload("res://combat/environment_visual.gd")
 const BeamVisual = preload("res://combat/beam_visual.gd")
@@ -36,7 +42,7 @@ var AURA_RADIUS: float:
 		return ship_definition.abilities.aura_radius
 var MAX_AURA: float:
 	get:
-		return ship_definition.abilities.aura_capacity
+		return ship_definition.shields.phalanx_charges * ship_definition.shields.phalanx_charge_energy if ship_definition.shields.aura == ShieldConfig.Aura.PHALANX else ship_definition.abilities.aura_capacity
 var MAX_NOVA: float:
 	get:
 		return ship_definition.abilities.nova_capacity
@@ -70,7 +76,7 @@ const MissionDefinition = preload("res://missions/mission_definition.gd")
 var mission = preload("res://missions/mission_runner.gd").new()
 
 const ShipDefinition = preload("res://ships/ship_definition.gd")
-@export var ship_definition: ShipDefinition = preload("res://ships/interceptor.tres")
+@export var ship_definition: ShipDefinition = preload("res://ships/charged_shield.tres")
 const ShieldConfig = preload("res://shields/shield_config.gd")
 var shields = preload("res://shields/shield_system.gd").new()
 var zen_released := false
@@ -225,6 +231,9 @@ func _ready() -> void:
 	ship.reset(ship_definition)
 	shields.reset(ship_definition.shields, player_pos)
 	weapon.twin_shots = ship_definition.default_twin_shots
+	enemy_weapons.doomsday.connect(func(effect): doomsday_effects.append(effect))
+	enemy_weapons.laser.connect(func(ray): enemy_lasers.append(ray))
+	enemy_weapons.projectile.connect(func(bullet): enemy_bullets.append(bullet))
 	enemy_weapons.aimed.connect(_fire_aimed)
 	enemy_weapons.fan.connect(_fire_fan)
 	enemy_weapons.radial.connect(_fire_radial)
@@ -242,6 +251,7 @@ func _ready() -> void:
 	$World.game = self
 	$Flares.game = self
 	$Fire.game = self
+	$Shields.game = self
 	$ThreatLayer/Threats.game = self
 	$InterfaceLayer/Interface.render = _draw_ui
 	rng.randomize()
@@ -296,6 +306,8 @@ func start_game() -> void:
 	state = GameState.PLAYING
 	enemies.clear()
 	player_bullets.clear()
+	doomsday_effects.clear()
+	enemy_lasers.clear()
 	enemy_bullets.clear()
 	particles.clear()
 	pickups.clear()
@@ -367,6 +379,8 @@ func _process(delta: float) -> void:
 			_update_spawner(delta)
 		reflected_rays.clear()
 		_update_enemies(delta)
+		_update_enemy_lasers(delta)
+		_update_doomsday(delta)
 		_apply_shield_reflections()
 		if state != GameState.PLAYING:
 			queue_redraw()
@@ -440,7 +454,7 @@ func _update_player(delta: float) -> void:
 	var zen_held := ship_definition.shields.personal_enabled and (zen_released or zen_button or Input.is_key_pressed(KEY_SHIFT) or Input.is_key_pressed(KEY_E) or Input.is_joy_button_pressed(0, JOY_BUTTON_RIGHT_SHOULDER))
 	if movement.length() > 0.0 or pointer_active:
 		zen_released = false
-		zen_held = zen_button or Input.is_key_pressed(KEY_SHIFT) or Input.is_key_pressed(KEY_E)
+		zen_held = manual_zen
 	shields.advance(delta, player_pos, zen_held)
 	if ship_definition.shields.aura == ShieldConfig.Aura.PULSE:
 		if aura_exhausted and aura_energy >= ship_definition.abilities.aura_restart:
@@ -457,7 +471,9 @@ func _update_player(delta: float) -> void:
 		aura_active = false
 		if aura_pressed and not shields.aura_held:
 			aura_energy -= shields.deploy(aura_energy, MAX_AURA)
-		# Shield Auras refill from collected energy/grazes, not passive regeneration.
+		# Phoenix 2 restores only a small reserve while piloting, never during Zen.
+		if not zen_held and not shields.protected() and aura_energy < shields.config.aura_regen_limit:
+			aura_energy = minf(shields.config.aura_regen_limit, aura_energy + shields.config.aura_regen_rate * delta)
 	shields.aura_held = aura_pressed
 	if not ship_definition.shields.personal_enabled and (Input.is_key_pressed(KEY_E) or Input.is_key_pressed(KEY_ENTER) or Input.is_joy_button_pressed(0, JOY_BUTTON_RIGHT_SHOULDER)):
 		_try_nova()
@@ -481,6 +497,7 @@ func _update_player_weapon_cycle(delta: float) -> void:
 func _spawn_twin_shots(delay: float = 0.0) -> void:
 	for offset in ship_definition.weapon.twin_offsets:
 		player_bullets.append({"pos": player_pos + PLAYER_NOSE_OFFSET + offset,
+			"origin": player_pos + PLAYER_NOSE_OFFSET + offset,
 			"vel": Vector2(0, -ship_definition.weapon.twin_speed), "radius": ship_definition.weapon.twin_radius, "damage": ship_definition.weapon.twin_damage,
 			"life": ship_definition.weapon.twin_lifetime, "age": 0.0, "delay": delay, "overcharged": false, "style": "twin"})
 
@@ -591,7 +608,7 @@ func _update_enemies(delta: float) -> void:
 		var kind: String = enemy["kind"]
 		var ready_to_fire := EnemyMovement.advance(enemy, enemy["movement"], delta, screen_size.x)
 		if ready_to_fire:
-			enemy_weapons.fire(enemy, enemy["weapon"], rng)
+			enemy_weapons.fire(enemy, enemy["weapon"], rng, player_pos, delta)
 		if enemy.has("turrets"):
 			HeavyEnemy.update(self, enemy, delta)
 
@@ -615,24 +632,24 @@ func _update_boss(enemy: Dictionary, delta: float) -> void:
 		enemy_weapons.fire(enemy, enemy["weapon"], rng)
 
 
-func _fire_aimed(origin: Vector2, speed: float, color: Color, radius: float) -> void:
+func _fire_aimed(origin: Vector2, speed: float, color: Color, radius: float, style: String = "capsule") -> void:
 	var direction := origin.direction_to(player_pos)
 	if direction == Vector2.ZERO:
 		direction = Vector2.DOWN
-	enemy_bullets.append({"pos": origin, "vel": direction * speed, "radius": radius, "color": color, "grazed": false, "age": 0.0})
+	enemy_bullets.append(EnemyProjectile.create(origin, direction * speed, radius, color, style))
 
 
-func _fire_fan(origin: Vector2, count: int, step: float, speed: float, color: Color, radius: float) -> void:
+func _fire_fan(origin: Vector2, count: int, step: float, speed: float, color: Color, radius: float, style: String = "capsule") -> void:
 	var base_angle := origin.direction_to(player_pos).angle()
 	for i in range(count):
 		var angle := base_angle + (float(i) - float(count - 1) * 0.5) * step
-		enemy_bullets.append({"pos": origin, "vel": Vector2.from_angle(angle) * speed, "radius": radius, "color": color, "grazed": false, "age": 0.0})
+		enemy_bullets.append(EnemyProjectile.create(origin, Vector2.from_angle(angle) * speed, radius, color, style, signf(sin(angle)) * 0.8 if style == "boomerang" else 0.0))
 
 
-func _fire_radial(origin: Vector2, count: int, speed: float, rotation: float, color: Color, radius: float) -> void:
+func _fire_radial(origin: Vector2, count: int, speed: float, rotation: float, color: Color, radius: float, style: String = "capsule") -> void:
 	for i in range(count):
 		var angle := rotation + TAU_F * float(i) / float(count)
-		enemy_bullets.append({"pos": origin, "vel": Vector2.from_angle(angle) * speed, "radius": radius, "color": color, "grazed": false, "age": 0.0})
+		enemy_bullets.append(EnemyProjectile.create(origin, Vector2.from_angle(angle) * speed, radius, color, style, signf(sin(angle)) * 0.8 if style == "boomerang" else 0.0))
 
 
 func _update_player_bullets(delta: float) -> void:
@@ -693,6 +710,9 @@ func _destroy_enemy(index: int) -> void:
 	var kind: String = enemy["kind"]
 	if kind in ["heavy", "boss"]:
 		wrecks.append({"pos": enemy["pos"], "timer": 0.12, "remaining": 5 if kind == "boss" else 3, "scale": 1.5 if kind == "boss" else 0.8})
+	if enemy["weapon"].death_mirv:
+		var carrier := Missile.create(enemy["pos"], player_pos)
+		enemy_bullets.append_array(Missile.fragments(carrier))
 	var burst_count := 34 if kind == "boss" else (18 if kind == "heavy" else 11)
 	_spawn_explosion(enemy["pos"], _enemy_color(kind), burst_count, enemy["radius"] * 3.0)
 	shockwaves.append({"pos": enemy["pos"], "radius": enemy["radius"] * 0.4, "max": enemy["radius"] * 2.7, "life": 0.52, "color": _enemy_color(kind)})
@@ -724,17 +744,33 @@ func _destroy_enemy(index: int) -> void:
 
 
 func _update_enemy_bullets(delta: float) -> void:
+	var steps := 1
+	for bullet in enemy_bullets:
+		if bullet.get("style", "") in ["shuriken", "boomerang"]:
+			steps = maxi(1, int(ceil(delta * 120.0)))
+			break
+	for step in range(steps):
+		_update_enemy_bullet_step(delta / steps)
+		if state == GameState.GAME_OVER:
+			return
+
+func _update_enemy_bullet_step(delta: float) -> void:
 	for i in range(enemy_bullets.size() - 1, -1, -1):
 		var bullet := enemy_bullets[i]
 		var previous: Vector2 = bullet["pos"]
-		bullet["pos"] += bullet["vel"] * delta
-		bullet["age"] += delta
-		var shield_hit := shields.intercept(previous, bullet["pos"], bullet["radius"], false, 0.0, bullet.get("style", "") == "missile")
+		EnemyProjectile.advance(bullet, delta)
+		var shield_hit := shields.intercept(previous, bullet["pos"], bullet["radius"], false, 0.0, bullet.get("style", "") == "missile", bullet.get("payload", "") == "super")
 		if not shield_hit.is_empty():
 			enemy_bullets.remove_at(i)
 			continue
 		if Missile.ready_to_split(bullet, player_pos):
-			enemy_bullets.append_array(Missile.fragments(bullet))
+			if bullet.get("payload", "pellet") == "super":
+				enemy_bullets.append_array(Missile.children(bullet))
+			elif bullet.get("payload", "pellet") == "laser":
+				for ray_index in range(bullet["count"]):
+					enemy_lasers.append(EnemyLaser.create(bullet["pos"], TAU * ray_index / bullet["count"], 0.55, 0.35, 5.0))
+			else:
+				enemy_bullets.append_array(Missile.fragments(bullet))
 			_spawn_sparks(bullet["pos"], Color(1.0, 0.2, 0.6), 5, 120.0)
 			enemy_bullets.remove_at(i)
 			continue
@@ -747,7 +783,7 @@ func _update_enemy_bullets(delta: float) -> void:
 			combo_timer = 2.0
 			nova_energy = minf(MAX_NOVA, nova_energy + 1.35)
 			if ship_definition.shields.aura != ShieldConfig.Aura.PULSE:
-				aura_energy = minf(MAX_AURA, aura_energy + MAX_AURA / (24.0 * maxf(1.0, ship_definition.shields.phalanx_charges)))
+				aura_energy = minf(MAX_AURA, aura_energy + 2.0)
 		var closest := Geometry2D.get_closest_point_to_segment(player_pos, previous, bullet["pos"])
 		if player_invulnerable <= 0.0 and closest.distance_to(player_pos) < bullet["radius"] + PLAYER_RADIUS:
 			enemy_bullets.remove_at(i)
@@ -789,7 +825,7 @@ func _absorb_bullets() -> void:
 
 
 func _try_nova() -> void:
-	if ship_definition.shields.personal_enabled:
+	if ship_definition.shields.aura != ShieldConfig.Aura.PULSE:
 		return
 	if nova_energy < MAX_NOVA or state != GameState.PLAYING:
 		return
@@ -848,7 +884,9 @@ func _update_pickups(delta: float) -> void:
 		var closest := Geometry2D.get_closest_point_to_segment(player_pos, previous, pickup["pos"])
 		if closest.distance_to(player_pos) < 25.0:
 			score += int(180.0 * combo)
+			var previous_energy := aura_energy
 			aura_energy = minf(MAX_AURA, aura_energy + float(pickup.get("aura", 4.0)))
+			shields.energy_collected(previous_energy, aura_energy, MAX_AURA)
 			if not ship_definition.shields.personal_enabled:
 				nova_energy = minf(MAX_NOVA, nova_energy + float(pickup.get("nova", 3.0)))
 			pickups.remove_at(i)
@@ -904,7 +942,7 @@ func _check_wave_complete() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if state == GameState.TITLE and ((event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed) or (event is InputEventScreenTouch and event.pressed)):
-		if event.position.y > screen_size.y * 0.925:
+		if event.position.y > screen_size.y * 0.925 and ship_definition != preload("res://ships/charged_shield.tres"):
 			select_ship(preload("res://ships/guardian.tres") if event.position.x < screen_size.x * 0.5 else preload("res://ships/phalanx.tres"))
 			return
 	if event is InputEventKey and event.pressed and not event.echo:
@@ -913,6 +951,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		if event.keycode == KEY_F4:
 			select_ship(preload("res://ships/phalanx.tres"))
+			return
+	if state == GameState.PLAYING and not paused and ship_definition.shields.aura != ShieldConfig.Aura.PULSE:
+		# A second finger activates Aura anywhere without taking over the drag.
+		if event is InputEventScreenTouch and event.pressed and pointer_index >= 0 and event.index != pointer_index and not _pause_button_rect().has_point(event.position):
+			aura_energy -= shields.deploy(aura_energy, MAX_AURA)
 			return
 	if state == GameState.PLAYING and not paused and ship_definition.shields.personal_enabled:
 		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
@@ -992,7 +1035,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				return
 			if _aura_button_rect().has_point(event.position):
 				mouse_aura = true
-			elif _nova_button_rect().has_point(event.position):
+			elif _nova_button_rect().has_point(event.position) and ship_definition.shields.aura == ShieldConfig.Aura.PULSE:
 				_try_nova()
 			else:
 				pointer_active = true
@@ -1020,7 +1063,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				return
 			if _aura_button_rect().has_point(event.position):
 				aura_pointer_index = event.index
-			elif _nova_button_rect().has_point(event.position):
+			elif _nova_button_rect().has_point(event.position) and ship_definition.shields.aura == ShieldConfig.Aura.PULSE:
 				_try_nova()
 			elif pointer_index < 0:
 				pointer_index = event.index
@@ -1055,6 +1098,8 @@ func _draw() -> void:
 	$Flares.queue_redraw()
 	$Fire.position = draw_offset
 	$Fire.queue_redraw()
+	$Shields.position = draw_offset
+	$Shields.queue_redraw()
 	draw_set_transform(Vector2.ZERO)
 	$InterfaceLayer/Interface.queue_redraw()
 	if flash > 0.0:
@@ -1121,57 +1166,7 @@ func _draw_world(canvas: Node2D) -> void:
 		_draw_player(canvas)
 
 func _draw_enemy_bullet(bullet: Dictionary, canvas: Node2D) -> void:
-	if bullet.get("style", "") == "missile":
-		Missile.draw_missile(canvas, bullet)
-		return
-	if bullet.get("style", "") == "dart":
-		var pos: Vector2 = bullet["pos"]
-		var direction: Vector2 = bullet["vel"].normalized()
-		var side := direction.orthogonal()
-		canvas.draw_colored_polygon(PackedVector2Array([pos + direction * 11.0, pos - direction * 7.0 + side * 5.0, pos - direction * 4.0, pos - direction * 7.0 - side * 5.0]), Color(1.8, 0.42, 0.04))
-		canvas.draw_line(pos - direction * 3.0, pos + direction * 7.0, Color(3.0, 1.8, 0.6), 2.0, true)
-		return
-	# Phoenix-style hostile shots are glossy directional capsules, not comet trails.
-	var pos: Vector2 = bullet["pos"]
-	var direction: Vector2 = bullet["vel"].normalized()
-	if direction == Vector2.ZERO:
-		direction = Vector2.DOWN
-	var normal := Vector2(-direction.y, direction.x)
-	var radius: float = bullet["radius"] * 0.72
-	var half_segment := radius * 0.74
-	var back := pos - direction * half_segment
-	var front := pos + direction * half_segment
-
-	# Restrained soft aura: enough separation from the background without merging patterns.
-	var glow_radius := radius * 1.48
-	var glow_color := Color(1.0, 0.015, 0.0, 0.065)
-	canvas.draw_line(back, front, glow_color, glow_radius * 2.0, true)
-	canvas.draw_circle(back, glow_radius, glow_color, true, -1.0, true)
-	canvas.draw_circle(front, glow_radius, glow_color, true, -1.0, true)
-
-	# Dark rim, saturated red glass shell, then a narrow orange-hot interior.
-	var rim_radius := radius * 1.04
-	var rim_color := Color(0.32, 0.004, 0.001, 0.96)
-	canvas.draw_line(back, front, rim_color, rim_radius * 2.0, true)
-	canvas.draw_circle(back, rim_radius, rim_color, true, -1.0, true)
-	canvas.draw_circle(front, rim_radius, rim_color, true, -1.0, true)
-
-	var shell_radius := radius * 0.83
-	var shell_color := Color(1.25, 0.025, 0.004, 0.98)
-	canvas.draw_line(back, front, shell_color, shell_radius * 2.0, true)
-	canvas.draw_circle(back, shell_radius, shell_color, true, -1.0, true)
-	canvas.draw_circle(front, shell_radius, shell_color, true, -1.0, true)
-
-	var inner_back := pos - direction * half_segment * 0.38
-	var inner_front := pos + direction * half_segment * 0.46
-	var inner_radius := radius * 0.47
-	var inner_color := Color(1.8, 0.3, 0.018, 0.98)
-	canvas.draw_line(inner_back, inner_front, inner_color, inner_radius * 2.0, true)
-	canvas.draw_circle(inner_back, inner_radius, inner_color, true, -1.0, true)
-	canvas.draw_circle(inner_front, inner_radius, inner_color, true, -1.0, true)
-
-	var highlight_pos := front - direction * radius * 0.32 - normal * radius * 0.18
-	canvas.draw_circle(highlight_pos, radius * 0.24, Color(2.0, 1.15, 0.34, 0.98), true, -1.0, true)
+	EnemyBulletVisual.draw(canvas, bullet)
 
 
 func _draw_player_beam(canvas: Node2D) -> void:
@@ -1300,8 +1295,23 @@ func _draw_ui(canvas: Node2D) -> void:
 	hud.MAX_AURA = MAX_AURA
 	hud.MAX_NOVA = MAX_NOVA
 	hud.aura_label = ["PULSE", "BARRIER", "PHALANX"][ship_definition.shields.aura]
-	hud.zen_label = "SHIELD" if ship_definition.shields.personal_enabled else "NOVA"
+	hud.zen_label = "SHIELD" if ship_definition.shields.personal_enabled else ("NOVA" if ship_definition.shields.aura == ShieldConfig.Aura.PULSE else "")
+	if hud.zen_label.is_empty():
+		hud.aura_label = "SHIELD"
 	hud.zen_fill = clampf(shields.charge / maxf(0.001, shields.config.personal_charge + shields.penalty), 0.0, 1.0) if ship_definition.shields.personal_enabled else nova_energy / MAX_NOVA
+	hud.zen_status = ""
+	if ship_definition.shields.personal_enabled:
+		if shields.protected():
+			hud.zen_status = "PROTECTED"
+			hud.zen_fill = shields.personal / maxf(0.001, shields.config.personal_duration)
+		elif shields.charge > 0.0:
+			hud.zen_status = "CHARGING"
+		elif shields.penalty > 0.01:
+			hud.zen_status = "RECOVERING"
+			hud.zen_fill = clampf(1.0 - shields.penalty / shields.config.personal_penalty, 0.0, 1.0)
+		else:
+			hud.zen_status = "RELEASE TO SHIELD"
+			hud.zen_fill = 1.0
 	hud.zen_active = shields.protected() if ship_definition.shields.personal_enabled else nova_energy >= MAX_NOVA
 	hud.enemies = enemies
 	hud.aura_energy = aura_energy
@@ -1396,8 +1406,8 @@ func select_ship(definition: ShipDefinition) -> void:
 	start_game()
 
 
-func _intercept_laser(start: Vector2, end: Vector2, delta: float) -> Vector2:
-	var hit := shields.intercept(start, end, HeavyEnemy.LASER_RADIUS, true, delta)
+func _intercept_laser(start: Vector2, end: Vector2, delta: float, radius: float = HeavyEnemy.LASER_RADIUS) -> Vector2:
+	var hit := shields.intercept(start, end, radius, true, delta)
 	if hit.is_empty():
 		return end
 	if hit["reflect"] and not enemies.is_empty():
@@ -1420,3 +1430,40 @@ func _apply_shield_reflections() -> void:
 		if enemy["hp"] <= 0.0:
 			_destroy_enemy(index)
 	shield_reflections.clear()
+
+func _update_enemy_lasers(delta: float) -> void:
+	for i in range(enemy_lasers.size() - 1, -1, -1):
+		var ray: Dictionary = enemy_lasers[i]
+		if ray.has("source") and not enemies.has(ray["source"]):
+			enemy_lasers.remove_at(i)
+			continue
+		var active := EnemyLaser.active_time(ray, delta)
+		if active > 0.0:
+			ray["blocked_end"] = _intercept_laser(ray["start"], ray["end"], active, ray["width"] * 0.5)
+			var closest := Geometry2D.get_closest_point_to_segment(player_pos, ray["start"], ray["blocked_end"])
+			if closest.distance_to(player_pos) < PLAYER_RADIUS + ray["width"] * 0.5:
+				_damage_player()
+		if ray["age"] >= ray["warning"] + ray["duration"]:
+			enemy_lasers.remove_at(i)
+
+func _update_doomsday(delta: float) -> void:
+	for i in range(doomsday_effects.size() - 1, -1, -1):
+		var effect := doomsday_effects[i]
+		if not effect["fired"] and not enemies.has(effect["source"]):
+			doomsday_effects.remove_at(i)
+			continue
+		var active := Doomsday.advance(effect, delta)
+		if effect["just_fired"] and effect["kind"] == "super":
+			var count: int = clampi(effect["count"], 1, 12)
+			for shot in range(count):
+				var angle := PI * 0.5 + (shot - (count - 1) * 0.5) * 0.45
+				enemy_bullets.append(Missile.create_super(effect["pos"], effect["pos"] + Vector2.from_angle(angle)))
+		if active > 0.0 and effect["kind"] == "bomb":
+			for field in shields.fields.duplicate():
+				var center: Vector2 = shields.position if field["kind"] == ShieldConfig.Aura.PHALANX else field["center"]
+				if center.distance_to(effect["pos"]) <= effect["radius"] + field["radius"]:
+					shields.fields.erase(field)
+			if player_pos.distance_to(effect["pos"]) <= effect["radius"] + PLAYER_RADIUS:
+				_damage_player()
+		if effect["age"] >= effect["warning"] + effect["duration"]:
+			doomsday_effects.remove_at(i)

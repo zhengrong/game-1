@@ -14,7 +14,7 @@ enum Aura { PULSE, BARRIER, PHALANX }
 @export var barrier_radius: float = 250.0
 @export var barrier_strength: float = 50.0
 @export var barrier_decay: float = 5.0
-@export var barrier_min_energy: float = 10.0
+@export var barrier_min_energy: float = 30.0
 @export var barrier_fade: float = 0.3
 @export var phalanx_radius: float = 60.0
 @export var phalanx_half_angle: float = 50.0
@@ -22,3 +22,7 @@ enum Aura { PULSE, BARRIER, PHALANX }
 @export var phalanx_charges: int = 2
 @export var phalanx_fade: float = 0.3
 @export var laser_drain: float = 12.5
+
+@export var aura_regen_limit: float = 10.0
+@export var aura_regen_rate: float = 10.0 / 3.0
+@export var phalanx_charge_energy: float = 60.0

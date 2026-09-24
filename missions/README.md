@@ -62,3 +62,31 @@ Validation: independent scheduler tests cover mixed groups, late reinforcements,
 transition delay, strict escape rules, restart isolation, empty stages/missions,
 and independent enemy state. Integration tests complete the default mission and
 a custom boss-then-scout mission.
+
+## Enemy weapon appearance
+
+Weapon profiles now carry `projectile_style` (`capsule`, `orb`, `dart`, or
+`lance`) alongside speed, collision radius and color. Changing a profile's
+appearance does not change its firing pattern or collision radius. Hull type
+and weapon remain independent. The foreground renderer honors projectile color.
+
+- Scouts fire aimed red capsules.
+- Spinners alternate splitting missiles and radial orange plasma orbs.
+- Heavy mounts retain tracked lasers and amber three-dart spreads.
+- Boss cycles use radial orbs, paired dart fans, then fast magenta lances.
+- MIRVs have a distinct diamond body and a split-charge indicator; their eight
+  fragments are pink plasma orbs.
+
+Darts and lances use short velocity-aligned wakes. Orbs have a rotating rim and
+highlight. Capsule shells retain their glossy appearance. These are original
+readable weapon signatures, not verified reproductions of Phoenix 2 weapons.
+All visuals use projectile age, no wall clock or RNG, and allocate no persistent
+trail particles. EnemyBulletVisual is independent of projectile simulation.
+
+Run `tests/capture_enemy_weapons.gd` on the GPU for a presentation gallery. The
+large samples are magnified 1.5 times; the smaller samples show normal scale.
+The gallery compares silhouettes, not firing-pattern timing.
+
+The mission now also uses behavior-driven dart streams, spinning shurikens,
+locked split boomerangs, speed lasers, laser MIRVs and on-death pellet carriers.
+See [the implementation and remaining gaps](../ENEMY_WEAPON_MATCH.md).

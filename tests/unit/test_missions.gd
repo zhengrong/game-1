@@ -138,7 +138,7 @@ func test_movement_and_weapons_can_be_composed_independently() -> void:
 	var rng := RandomNumberGenerator.new()
 	var enemy := Factory.create(preload("res://missions/enemies/fan_scout.tres"), 200.0, rng)
 	var shots: Array = []
-	weapons.fan.connect(func(origin, count, spread, speed, _color, radius): shots.append([origin, count, spread, speed, radius]))
+	weapons.fan.connect(func(origin, count, spread, speed, _color, radius, _style): shots.append([origin, count, spread, speed, radius]))
 	enemy["fire"] = 0.0
 	var previous: Vector2 = enemy["pos"]
 	assert_true(movement.advance(enemy, enemy["movement"], 0.5, 720.0))
@@ -156,7 +156,7 @@ func test_standalone_radial_and_missile_profiles() -> void:
 	var rng := RandomNumberGenerator.new()
 	var enemy := Factory.create(SCOUT, 200.0, rng)
 	var events := [0, 0]
-	weapons.radial.connect(func(_origin, count, _speed, _rotation, _color, _radius): events[0] += count)
+	weapons.radial.connect(func(_origin, count, _speed, _rotation, _color, _radius, _style): events[0] += count)
 	weapons.missile.connect(func(_origin): events[1] += 1)
 	enemy["fire"] = 0.0
 	weapons.fire(enemy, preload("res://missions/weapons/radial.tres"), rng)

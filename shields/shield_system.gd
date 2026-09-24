@@ -3,6 +3,7 @@ const Config = preload("res://shields/shield_config.gd")
 var config: Config = Config.new()
 var fields: Array[Dictionary] = []
 var visual_time: float = 0.0
+var charge_pulses: Dictionary = {}
 var personal: float = 0.0
 var fade: float = 0.0
 var charge: float = 0.0
@@ -15,6 +16,7 @@ var flashes: Array[Dictionary] = []
 
 func reset(settings: Config, origin: Vector2) -> void:
 	visual_time = 0.0
+	charge_pulses.clear()
 	config = settings
 	fields.clear()
 	flashes.clear()
@@ -29,6 +31,10 @@ func reset(settings: Config, origin: Vector2) -> void:
 
 func advance(delta: float, origin: Vector2, zen_held: bool) -> void:
 	visual_time += delta
+	for index in charge_pulses.keys():
+		charge_pulses[index] -= delta
+		if charge_pulses[index] <= 0.0:
+			charge_pulses.erase(index)
 	previous_position = position
 	position = origin
 	fade = maxf(0.0, fade - delta)
@@ -115,7 +121,7 @@ static func boundary(start: Vector2, end: Vector2, center: Vector2, radius: floa
 				return t
 	return -1.0
 
-func intercept(start: Vector2, end: Vector2, radius: float, laser: bool = false, delta: float = 0.0, missile: bool = false) -> Dictionary:
+func intercept(start: Vector2, end: Vector2, radius: float, laser: bool = false, delta: float = 0.0, missile: bool = false, overload: bool = false) -> Dictionary:
 	var nearest := 2.0
 	var chosen: Dictionary = {}
 	var personal_hit := false
@@ -140,7 +146,7 @@ func intercept(start: Vector2, end: Vector2, radius: float, laser: bool = false,
 		return {}
 	var point := start.lerp(end, nearest)
 	if not chosen.is_empty() and not chosen["fading"]:
-		chosen["strength"] -= config.laser_drain * delta if laser else (3.0 if missile else 1.0)
+		chosen["strength"] -= chosen["strength"] if overload else (config.laser_drain * delta if laser else (3.0 if missile else 1.0))
 		_break_if_empty(chosen)
 	# Keep effects bounded under sustained lasers; store local coordinates for mobile shields.
 	if flashes.size() >= 48:
@@ -148,3 +154,10 @@ func intercept(start: Vector2, end: Vector2, radius: float, laser: bool = false,
 	var mobile_hit: bool = personal_hit or chosen.get("kind", -1) == Config.Aura.PHALANX
 	flashes.append({"pos": point, "offset": point - position, "mobile": mobile_hit, "life": 0.32})
 	return {"point": point, "reflect": personal_hit and laser and config.reflect_lasers}
+
+func energy_collected(before: float, after: float, capacity: float) -> void:
+	if config.aura != Config.Aura.PHALANX:
+		return
+	var cost := capacity / maxf(1.0, config.phalanx_charges)
+	for index in range(clampi(int(before / cost), 0, config.phalanx_charges), clampi(int(after / cost), 0, config.phalanx_charges)):
+		charge_pulses[index] = 0.45

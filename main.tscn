@@ -1,4 +1,4 @@
-[gd_scene load_steps=9 format=3]
+[gd_scene load_steps=10 format=3]
 
 [ext_resource path="res://main.gd" type="Script" id="1_main"]
 [ext_resource path="res://combat/flare_visual.gd" type="Script" id="2_flares"]
@@ -7,6 +7,8 @@
 [ext_resource path="res://combat/fire_canvas.gd" type="Script" id="5_fire"]
 [ext_resource path="res://combat/threat_canvas.gd" type="Script" id="6_threats"]
 [ext_resource path="res://combat/interface_canvas.gd" type="Script" id="7_interface"]
+
+[ext_resource path="res://shields/shield_canvas.gd" type="Script" id="8_shields"]
 
 [sub_resource type="Environment" id="Environment_vfx"]
 background_mode = 3
@@ -28,6 +30,10 @@ environment = SubResource("Environment_vfx")
 [node name="Fire" type="Node2D" parent="."]
 z_index = -1
 script = ExtResource("5_fire")
+
+[node name="Shields" type="Node2D" parent="."]
+z_index = -1
+script = ExtResource("8_shields")
 
 [node name="Flares" type="Node2D" parent="."]
 z_index = -1

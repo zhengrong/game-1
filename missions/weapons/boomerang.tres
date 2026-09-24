@@ -4,8 +4,13 @@
 
 [resource]
 script = ExtResource("1")
-pattern = 5
-count = 12
-speed = 180.0
-cooldown = 1.65
-projectile_style = "orb"
+pattern = 7
+aiming = 2
+projectile_style = "boomerang"
+speed = 430.0
+tier = 2
+burst_count = 4
+burst_interval = 0.10
+curve = 0.8
+spread = 0.1
+cooldown = 2.0

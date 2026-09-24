@@ -7,15 +7,15 @@ An original one-mission vertical bullet-hell demo for Godot 4.7, inspired by the
 Open `project.godot` in Godot and press **F6/F5**, or run the project from the editor.
 
 - Move: drag, mouse, WASD, arrow keys, or left stick
-- Pulse field: hold the lower-left button, Space, or left shoulder
-- Nova: press the lower-right button, E, Enter, or right shoulder when charged
+- Shield: tap a second finger while dragging, or press the lower-left button, Space, or left shoulder
+- Six purple circles store charges; collecting energy fills them, and each activation spends one
 - Pause: Escape
 - Heavy-enemy trial: F2, or click/tap the trial entry at the bottom of the title screen
 - Return to title: F1
 - Controller: A/Start launches or retries; Start pauses/resumes
 - Weapons fire automatically; press **V** to switch between the electrical lance and twin blue shots
 
-Pulse consumes cyan energy and destroys nearby hostile projectiles. Grazing shots, destroying enemies, and collecting energy shards charge the orange Nova. Nova clears the screen and damages every enemy.
+The default ship has one shield ability with six stored charges. Collect enemy energy to fill the purple circles beside the ship. A full circle funds one activation; leftover energy stays saved toward the next circle. Empty or partially filled circles cannot deploy a shield. Collecting energy and releasing your movement finger never activate it automatically. The deployed shield uses the existing forward arc; the uploaded charging clip does not establish its activation geometry. Older loadouts remain available through development shortcuts F3/F4.
 
 The demo contains three escalating formations and one boss wave. It uses original AI-generated ship and VFX artwork combined with Godot-native HDR lighting, projectile trails, parallax scenery, damage fires, smoke, sparks, shockwaves, UI, enemy patterns, and synthesized sound. No third-party game assets are included.
 

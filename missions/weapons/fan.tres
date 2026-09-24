@@ -6,3 +6,4 @@
 script = ExtResource("1")
 pattern = 4
 cooldown = 1.5
+projectile_style = "dart"

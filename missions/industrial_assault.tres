@@ -1,4 +1,4 @@
-[gd_resource type="Resource" load_steps=16 format=3]
+[gd_resource type="Resource" load_steps=22 format=3]
 
 [ext_resource type="Script" path="res://missions/mission_definition.gd" id="mission"]
 [ext_resource type="Script" path="res://missions/stage_definition.gd" id="stage"]
@@ -8,9 +8,17 @@
 [ext_resource type="Resource" path="res://missions/enemies/heavy.tres" id="heavy"]
 [ext_resource type="Resource" path="res://missions/enemies/boss.tres" id="boss"]
 
+[ext_resource type="Resource" path="res://missions/enemies/dart_stream.tres" id="dart_stream"]
+[ext_resource type="Resource" path="res://missions/enemies/shuriken.tres" id="shuriken"]
+[ext_resource type="Resource" path="res://missions/enemies/boomerang.tres" id="boomerang"]
+[ext_resource type="Resource" path="res://missions/enemies/laser_mirv.tres" id="laser_mirv"]
+[ext_resource type="Resource" path="res://missions/enemies/speed_laser.tres" id="speed_laser"]
+
+[ext_resource type="Resource" path="res://missions/enemies/caged_mirv.tres" id="caged"]
+
 [sub_resource type="Resource" id="group0"]
 script = ExtResource("group")
-enemies = [ExtResource("scout")]
+enemies = [ExtResource("scout"), ExtResource("dart_stream")]
 count = 10
 start_time = 0.15
 interval = 0.72
@@ -24,7 +32,7 @@ completion = 0
 
 [sub_resource type="Resource" id="group1"]
 script = ExtResource("group")
-enemies = [ExtResource("scout"), ExtResource("spinner"), ExtResource("spinner")]
+enemies = [ExtResource("caged"), ExtResource("shuriken"), ExtResource("spinner")]
 count = 13
 start_time = 0.15
 interval = 0.62
@@ -38,7 +46,7 @@ completion = 0
 
 [sub_resource type="Resource" id="group2"]
 script = ExtResource("group")
-enemies = [ExtResource("heavy"), ExtResource("scout"), ExtResource("spinner"), ExtResource("scout")]
+enemies = [ExtResource("heavy"), ExtResource("speed_laser"), ExtResource("boomerang"), ExtResource("scout"), ExtResource("laser_mirv")]
 count = 17
 start_time = 0.15
 interval = 0.52

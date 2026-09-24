@@ -95,3 +95,27 @@ Remaining differences include the reference's wider, asymmetric flame silhouette
 shot and enemy motion, smoke integration, secondary energy-burst shape, ship art,
 and environment. This pass does not establish full visual parity or iPhone frame
 time.
+
+## Player twin-shot correction (September 23)
+
+The supplied clip shows paired elongated blue-white heads, internal curved
+filaments, long wakes and small transverse ribs near the launch end. The old
+renderer used a single solid diamond and a short sine-wave trail; the default
+Interceptor additionally selected the unrelated beam weapon.
+
+Interceptor, Guardian and Phalanx now select twin shots by default (Bulwark
+already did). V still toggles the legacy beam. Each shot stores its launch
+position so the wake cannot jump sideways when the player moves. The dedicated
+PlayerShotVisual draws three curved lobes with a white upper body, blue gaps,
+thinner lower filaments, a longer age-based wake and fading launch ribs. Drawing
+is deterministic, does not consume RNG and does not change projectile collision.
+
+The existing 44-unit spacing, 2100-unit speed and 0.28-second cadence are retained;
+these are approximations, not newly fitted measurements. Trail length is capped
+at 480 units. The ship's sprite, exact brightness, head deformation, impact
+response and ship motion still differ from the recording. This is not full
+frame-for-frame matching.
+
+GPU fixture: `tests/capture_player_shots.gd` captures five flight ages in
+`visual-reports/player-shots/`. It isolates the player weapon without enemies;
+those images are shape/timing diagnostics, not a replay of the reference scene.

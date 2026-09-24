@@ -4,9 +4,12 @@
 [sub_resource type="Resource" id="profile"]
 script = ExtResource("shield")
 aura = 2
+phalanx_radius = 95.0
 personal_enabled = true
+personal_radius = 85.0
 reflect_lasers = true
 [resource]
 script = ExtResource("ship")
 display_name = "Phalanx"
 shields = SubResource("profile")
+default_twin_shots = true

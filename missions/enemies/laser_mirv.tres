@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="" load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://missions/enemy_definition.gd" id="1"]
+
+[ext_resource type="Resource" path="res://missions/movements/spinner.tres" id="move"]
+[ext_resource type="Resource" path="res://missions/weapons/laser_mirv.tres" id="weapon"]
+
+[resource]
+script = ExtResource("1")
+kind = "spinner"
+radius = 29.0
+health = 92.0
+speed = 54.0
+score = 1050
+entry_y = -49.0
+movement = ExtResource("move")
+weapon = ExtResource("weapon")

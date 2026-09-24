@@ -1,5 +1,6 @@
 extends Node2D
 ## Additive light only: reads combat state and never advances timers or RNG.
+const PlayerShotVisual = preload("res://combat/player_shot_visual.gd")
 const ShieldVisual = preload("res://shields/shield_visual.gd")
 const LIGHT = preload("res://combat/flare_texture.tres")
 var game: Node2D
@@ -28,20 +29,7 @@ func _draw() -> void:
 	for shot in game.player_bullets:
 		if shot.get("style", "") != "twin" or shot.get("delay", 0.0) > 0.0:
 			continue
-		var head: Vector2 = shot["pos"]
-		var tail_length: float = minf(220.0, shot["age"] * shot["vel"].length())
-		var tail := PackedVector2Array()
-		for i in range(13):
-			var t := float(i) / 12.0
-			tail.append(head + Vector2(sin(t * 22.0 - shot["age"] * 24.0) * 5.0 * t, t * tail_length))
-		for i in range(1, tail.size()):
-			var fade := pow(1.0 - float(i) / tail.size(), 2.0)
-			draw_line(tail[i - 1], tail[i], Color(0.08, 0.25, 1.8, fade * 0.12), 6.0, true)
-			draw_line(tail[i - 1], tail[i], Color(0.3, 0.85, 2.0, fade * 0.55), 1.2, true)
-		light(head, Vector2(58, 160), Color(0.12, 0.65, 2.3, 0.75))
-		light(head, Vector2(24, 110), Color(1.6, 2.1, 2.8, 1.0))
-		var blade := PackedVector2Array([head + Vector2(0, -48), head + Vector2(9, -13), head + Vector2(5, 28), head + Vector2(0, 46), head + Vector2(-5, 28), head + Vector2(-9, -13)])
-		draw_colored_polygon(blade, Color(1.6, 2.0, 2.5, 0.9))
+		PlayerShotVisual.draw(self, shot)
 	for particle in game.particles:
 		if particle["kind"] == "energy_burst":
 			var age: float = particle["max_life"] - particle["life"]

@@ -3,12 +3,12 @@
 [ext_resource type="Script" path="res://shields/shield_config.gd" id="shield"]
 [sub_resource type="Resource" id="profile"]
 script = ExtResource("shield")
-aura = 1
-personal_enabled = true
-personal_radius = 85.0
-reflect_lasers = true
+aura = 2
+phalanx_radius = 95.0
+phalanx_charges = 6
+personal_enabled = false
 [resource]
 script = ExtResource("ship")
-display_name = "Guardian"
+display_name = "Shield"
 shields = SubResource("profile")
 default_twin_shots = true

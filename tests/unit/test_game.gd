@@ -4,8 +4,10 @@ var game
 
 func before_each() -> void:
 	game = load("res://main.tscn").instantiate()
+	game.ship_definition = load("res://ships/interceptor.tres")
 	add_child_autofree(game)
 	game.set_process(false)
+	game.twin_shots = false # Most legacy tests explicitly exercise the beam profile.
 	game.rng.seed = 12345
 
 func after_each() -> void:
@@ -798,7 +800,7 @@ func test_shield_loadout_controls_projectiles_and_laser_reflection() -> void:
 	game.mouse_aura = true
 	game._update_player(0.01)
 	assert_eq(game.shields.fields.size(), 1)
-	assert_eq(game.aura_energy, 0.0)
+	assert_almost_eq(game.aura_energy, game.shields.config.aura_regen_rate * 0.01, 0.00001)
 	game._update_player(0.01)
 	assert_eq(game.shields.fields.size(), 1, "Holding an aura button cannot repeatedly deploy")
 	game.enemy_bullets.append(bullet(Vector2(360, 400), Vector2(0, 2000)))
@@ -855,7 +857,8 @@ func test_shield_touch_selection_release_and_pause() -> void:
 	event.index = 1
 	event.position = game._nova_button_rect().get_center()
 	game._unhandled_input(event)
-	assert_true(game.zen_button)
+	assert_false(game.zen_button, "Second finger deploys Aura even over the optional Zen button")
+	assert_eq(game.shields.fields.size(), 1)
 	event.pressed = false
 	game._unhandled_input(event)
 	assert_false(game.zen_button)
@@ -900,7 +903,7 @@ func test_zen_holds_position_and_stops_main_weapon() -> void:
 	game.zen_button = false
 	game._update_player(0.1)
 	assert_ne(game.player_pos, origin)
-	assert_gt(game.beam_visible_timer, 0.0)
+	assert_gt(game.player_bullets.size(), 0, "Default shield ship resumes twin shots")
 
 func test_kill_energy_arrives_only_on_collection_and_does_not_charge_zen() -> void:
 	game.select_ship(load("res://ships/guardian.tres"))
@@ -942,3 +945,296 @@ func test_heavy_drop_budget_swept_collection_and_victory() -> void:
 	game._process(0.1)
 	assert_eq(game.pickups.size(), 0, "Fast energy cannot tunnel through the ship, even after victory")
 	assert_almost_eq(game.aura_energy, 25.0, 0.001)
+
+func test_enemy_weapons_have_distinct_projectiles_and_preserve_profiles() -> void:
+	game.start_game()
+	var scout: Dictionary = enemy_at("scout", Vector2(300, 200))
+	scout["fire"] = 0.0
+	game.enemy_weapons.fire(scout, scout["weapon"], game.rng)
+	assert_eq(game.enemy_bullets.back()["style"], "capsule")
+	var spinner: Dictionary = enemy_at("spinner", Vector2(300, 250))
+	spinner["age"] = 2.0
+	spinner["fire"] = 0.0
+	game.enemy_weapons.fire(spinner, preload("res://missions/weapons/spinner.tres"), game.rng)
+	assert_eq(game.enemy_bullets.back()["style"], "orb")
+	var boss: Dictionary = enemy_at("boss", Vector2(300, 200))
+	for phase in [0.0, 1.5, 3.0]:
+		boss["age"] = phase
+		boss["fire"] = 0.0
+		game.enemy_weapons.fire(boss, boss["weapon"], game.rng)
+		var expected: String = "orb" if phase == 0.0 else ("dart" if phase == 1.5 else "lance")
+		assert_eq(game.enemy_bullets.back()["style"], expected)
+	var profile = preload("res://missions/enemy_weapon_definition.gd").new()
+	profile.projectile_style = "lance"
+	profile.color = Color(0.8, 0.15, 0.7)
+	profile.speed = 410.0
+	scout["fire"] = 0.0
+	game.enemy_weapons.fire(scout, profile, game.rng)
+	assert_eq(game.enemy_bullets.back()["color"], profile.color)
+	assert_almost_eq(game.enemy_bullets.back()["vel"].length(), 410.0, 0.01)
+	assert_eq(game.enemy_bullets.back()["radius"], profile.radius)
+	var missile: Dictionary = game.Missile.create(Vector2.ZERO, Vector2.DOWN)
+	assert_eq(game.Missile.fragments(missile)[0]["style"], "orb")
+	# Exercise all presentation branches without changing projectile state or RNG.
+	var snapshot: Array = game.enemy_bullets.duplicate(true)
+	var rng_state: int = game.rng.state
+	game.queue_redraw()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	assert_eq(game.enemy_bullets, snapshot)
+	assert_eq(game.rng.state, rng_state)
+
+func test_laser_mirv_death_payload_and_laser_damage() -> void:
+	game.start_game()
+	game.enemy_bullets.clear()
+	var carrier: Dictionary = game.Missile.create(Vector2(200, 200), game.player_pos)
+	carrier["payload"] = "laser"
+	carrier["count"] = 5
+	carrier["age"] = 3.0
+	game.enemy_bullets.append(carrier)
+	game._update_enemy_bullets(0.01)
+	assert_eq(game.enemy_lasers.size(), 5)
+	assert_true(game.enemy_bullets.is_empty())
+	game.player_invulnerable = 0.0
+	game.enemy_lasers.clear()
+	game.enemy_lasers.append(game.EnemyLaser.create(game.player_pos - Vector2(0, 200), PI * 0.5, 0.5, 0.3, 8))
+	game._update_enemy_lasers(0.4)
+	assert_eq(game.player_hp, 3, "Warning cannot damage the ship")
+	game.queue_redraw()
+	await get_tree().process_frame
+	game._update_enemy_lasers(0.2)
+	assert_eq(game.player_hp, 2)
+	game.queue_redraw()
+	await get_tree().process_frame
+	game._update_enemy_lasers(1.0)
+	assert_true(game.enemy_lasers.is_empty())
+	var enemy: Dictionary = game.EnemyFactory.create(preload("res://missions/enemies/caged_mirv.tres"), 200, game.rng)
+	game.enemies.append(enemy)
+	game._destroy_enemy(game.enemies.size() - 1)
+	assert_eq(game.enemy_bullets.size(), 8)
+	for style in ["shuriken", "boomerang", "pellet"]:
+		game.enemy_bullets.append(game.EnemyProjectile.create(Vector2(200, 300), Vector2.DOWN * 300, 6, Color.RED, style, 0.8))
+	game.enemy_bullets.append(carrier)
+	game.queue_redraw()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	game.start_game()
+	assert_true(game.enemy_lasers.is_empty())
+
+func test_new_lasers_cancel_with_source_and_are_blocked_by_personal_shield() -> void:
+	game.select_ship(preload("res://ships/guardian.tres"))
+	var boss: Dictionary = enemy_at("boss", Vector2(300, 200))
+	boss["hp"] = boss["max_hp"] * 0.3
+	boss["age"] = 5.0
+	boss["fire"] = 0.0
+	game.enemy_weapons.fire(boss, boss["weapon"], game.rng, game.player_pos, 0.1)
+	assert_eq(game.enemy_lasers.size(), 1)
+	assert_eq(game.enemy_lasers[0]["width"], 36.0)
+	game.enemies.clear()
+	game._update_enemy_lasers(0.1)
+	assert_true(game.enemy_lasers.is_empty(), "Destroying the firing hull cancels its warning")
+	game.shields.reset(game.ship_definition.shields, game.player_pos)
+	game.shields.advance(0.6, game.player_pos, true)
+	game.player_invulnerable = 0.0
+	var ray: Dictionary = game.EnemyLaser.create(game.player_pos - Vector2(0, 300), PI * 0.5, 0.1, 0.5, 8.0)
+	game.enemy_lasers.append(ray)
+	game._update_enemy_lasers(0.2)
+	assert_eq(game.player_hp, 3)
+	assert_lt(ray["blocked_end"].y, game.player_pos.y)
+
+func test_doomsday_bomb_warning_barrier_destruction_and_personal_protection() -> void:
+	game.select_ship(preload("res://ships/guardian.tres"))
+	game.player_invulnerable = 0.0
+	var enemy: Dictionary = enemy_at("boss", game.player_pos - Vector2(0, 100))
+	game.shields.reset(game.ship_definition.shields, game.player_pos)
+	game.shields.deploy(100, 100)
+	var blast: Dictionary = game.Doomsday.create(enemy, "bomb", 1.5, 300)
+	game.doomsday_effects.append(blast)
+	game._update_doomsday(1.0)
+	assert_eq(game.player_hp, 3)
+	assert_eq(game.shields.fields.size(), 1)
+	game.queue_redraw()
+	await get_tree().process_frame
+	game._update_doomsday(0.6)
+	assert_eq(game.player_hp, 2, "Barrier cannot protect against the bomb")
+	assert_true(game.shields.fields.is_empty())
+	game.queue_redraw()
+	await get_tree().process_frame
+	game._update_doomsday(1.0)
+	assert_true(game.doomsday_effects.is_empty())
+	game.player_invulnerable = 0.0
+	game.shields.advance(0.6, game.player_pos, true)
+	game.doomsday_effects.append(game.Doomsday.create(enemy, "bomb", 0.1, 300))
+	game._update_doomsday(0.2)
+	assert_eq(game.player_hp, 2, "Personal Shield protects against the blast")
+	game.doomsday_effects.clear()
+	game.doomsday_effects.append(game.Doomsday.create(enemy, "super", 1.5, 300))
+	game.enemies.clear()
+	game._update_doomsday(2.0)
+	assert_true(game.doomsday_effects.is_empty(), "Destroyed launcher cannot finish charging")
+
+func test_super_mirv_launch_split_overload_and_boss_cycle() -> void:
+	game.select_ship(preload("res://ships/phalanx.tres"))
+	var enemy: Dictionary = enemy_at("boss", Vector2(300, 200))
+	game.doomsday_effects.append(game.Doomsday.create(enemy, "super", 0.1, 300, 3))
+	game._update_doomsday(0.2)
+	assert_eq(game.enemy_bullets.size(), 3)
+	game.queue_redraw()
+	await get_tree().process_frame
+	game._update_doomsday(0.01)
+	assert_eq(game.enemy_bullets.size(), 3, "Launch happens once")
+	game.enemy_bullets.clear()
+	game.shields.reset(game.ship_definition.shields, game.player_pos)
+	game.shields.deploy(100, 100)
+	var super_mirv: Dictionary = game.Missile.create_super(game.player_pos - Vector2(0, game.shields.config.phalanx_radius + 30), game.player_pos)
+	super_mirv["vel"] = Vector2.DOWN * 400
+	game.enemy_bullets.append(super_mirv)
+	game._update_enemy_bullets(0.1)
+	assert_true(game.enemy_bullets.is_empty(), "Shield intercept occurs before splitting")
+	assert_true(game.shields.fields[0]["fading"])
+	assert_eq(game.shields.fields[0]["strength"], 0.0)
+	game.shields.fields.clear()
+	game.player_invulnerable = 99
+	game.enemy_bullets.append(game.Missile.create_super(game.player_pos - Vector2(0, 150), game.player_pos))
+	game._update_enemy_bullets(0.01)
+	assert_eq(game.enemy_bullets.size(), 6)
+	game._update_enemy_bullets(0.01)
+	assert_eq(game.enemy_bullets.size(), 48)
+	enemy["hp"] = enemy["max_hp"] * 0.3
+	game.doomsday_effects.clear()
+	for phase in [1, 2]:
+		enemy["doom_phase"] = phase
+		enemy["age"] = 20.0
+		enemy["next_doom"] = 0.0
+		enemy["fire"] = 0.0
+		game.enemy_weapons.fire(enemy, enemy["weapon"], game.rng)
+	assert_eq(game.doomsday_effects[0]["kind"], "bomb")
+	assert_eq(game.doomsday_effects[1]["kind"], "super")
+	game.start_game()
+	assert_true(game.doomsday_effects.is_empty())
+
+func test_player_default_twins_keep_launch_origin_and_draw_without_mutation() -> void:
+	for name in ["interceptor", "guardian", "phalanx"]:
+		game.select_ship(load("res://ships/%s.tres" % name))
+		assert_true(game.twin_shots, "Selected default loadout uses the reference twin weapon")
+	game._spawn_twin_shots()
+	assert_eq(game.player_bullets.size(), 2)
+	var original: Vector2 = game.player_bullets[0]["origin"]
+	game.player_pos.x += 100
+	game._update_player_bullets(0.05)
+	assert_eq(game.player_bullets[0]["origin"], original, "Trail stays on its launch path when the player moves")
+	assert_almost_eq(game.player_bullets[0]["pos"].x, original.x, 0.001)
+	for age in [0.0, 0.08, 0.4]:
+		for shot in game.player_bullets:
+			shot["age"] = age
+		var snapshot: Array = game.player_bullets.duplicate(true)
+		game.queue_redraw()
+		await get_tree().process_frame
+		await get_tree().process_frame
+		assert_eq(game.player_bullets, snapshot)
+
+func test_default_shield_loadout_and_art_sized_boundaries() -> void:
+	var scene = load("res://main.tscn").instantiate()
+	assert_eq(scene.ship_definition.display_name, "Shield")
+	scene.free()
+	for profile in [preload("res://ships/guardian.tres"), preload("res://ships/phalanx.tres")]:
+		game.select_ship(profile)
+		game.start_encounter_preview()
+		game.shields.reset(profile.shields, game.player_pos)
+		assert_gt(profile.shields.personal_radius, profile.visual_size.y * 0.5)
+		game.shields.advance(profile.shields.personal_charge, game.player_pos, true)
+		var hit: Dictionary = game.shields.intercept(game.player_pos - Vector2(0, 160), game.player_pos, 0.0)
+		assert_almost_eq(hit["point"].distance_to(game.player_pos), profile.shields.personal_radius, 0.01)
+		game.shields.reset(profile.shields, game.player_pos)
+		game.shields.deploy(100, 100)
+		var field: Dictionary = game.shields.fields[0]
+		var radius: float = field["radius"]
+		var blocked: Dictionary = game.shields.intercept(game.player_pos - Vector2(0, radius + 30), game.player_pos, 0.0)
+		assert_false(blocked.is_empty())
+		assert_almost_eq(blocked["point"].distance_to(game.player_pos), radius, 0.01)
+		if profile.shields.aura == game.ShieldConfig.Aura.PHALANX:
+			assert_true(game.shields.intercept(game.player_pos + Vector2(0, radius + 30), game.player_pos, 0.0).is_empty(), "Rear remains exposed")
+
+func test_phoenix_shield_reserve_and_second_finger_controls() -> void:
+	game.select_ship(preload("res://ships/guardian.tres"))
+	game.start_encounter_preview()
+	game.aura_energy = 0.0
+	game._update_player(1.0)
+	assert_almost_eq(game.aura_energy, 10.0 / 3.0, 0.001)
+	game._update_player(5.0)
+	assert_eq(game.aura_energy, 10.0, "Automatic reserve cannot fund a Barrier")
+	assert_eq(game.shields.deploy(29.0, game.MAX_AURA), 0.0)
+	assert_eq(game.shields.deploy(30.0, game.MAX_AURA), 30.0)
+	game.aura_energy = 0.0
+	game.zen_button = true
+	game._update_player(0.1)
+	assert_eq(game.aura_energy, 0.0, "Zen suspends reserve regeneration")
+	game.zen_button = false
+	game.shields.reset(game.ship_definition.shields, game.player_pos)
+	game.aura_energy = 100.0
+	var finger := InputEventScreenTouch.new()
+	finger.index = 0
+	finger.position = Vector2(300, 700)
+	finger.pressed = true
+	game._unhandled_input(finger)
+	var second := InputEventScreenTouch.new()
+	second.index = 1
+	second.position = Vector2(450, 700)
+	second.pressed = true
+	game._unhandled_input(second)
+	assert_eq(game.shields.fields.size(), 1)
+	assert_eq(game.pointer_index, 0, "Second finger must not steal movement")
+	assert_eq(game.aura_energy, 0.0)
+	second.pressed = false
+	game._unhandled_input(second)
+	assert_false(game.zen_released)
+	finger.pressed = false
+	game._unhandled_input(finger)
+	game._update_player(0.6)
+	assert_true(game.shields.protected(), "Lifting movement finger activates Personal Shield")
+	game.select_ship(preload("res://ships/phalanx.tres"))
+	assert_eq(game.MAX_AURA, 120.0)
+	assert_eq(game.shields.deploy(59, game.MAX_AURA), 0.0)
+	assert_eq(game.shields.deploy(60, game.MAX_AURA), 60.0)
+
+func test_six_shield_charges_collect_then_spend_one_per_activation() -> void:
+	game.select_ship(preload("res://ships/charged_shield.tres"))
+	game.start_encounter_preview()
+	assert_eq(game.MAX_AURA, 360.0)
+	assert_false(game.ship_definition.shields.personal_enabled)
+	for remaining in range(5, -1, -1):
+		game.mouse_aura = true
+		game._update_player(0.0)
+		assert_eq(game.aura_energy, float(remaining * 60))
+		assert_eq(game.shields.fields.size(), 1, "Reactivation replaces the current shield")
+		game._update_player(0.0)
+		assert_eq(game.aura_energy, float(remaining * 60), "Holding cannot spend another charge")
+		game.mouse_aura = false
+		game._update_player(0.0)
+	game.shields.fields.clear()
+	game.mouse_aura = true
+	game._update_player(0.0)
+	assert_true(game.shields.fields.is_empty(), "Empty circles cannot activate a shield")
+	game.mouse_aura = false
+	game._update_player(0.0)
+	game.pickups.append({"pos": game.player_pos, "vel": Vector2.ZERO, "life": 1.0, "aura": 65.0})
+	game._update_pickups(0.0)
+	assert_eq(game.aura_energy, 65.0)
+	assert_true(game.shields.fields.is_empty(), "Collection stores energy without activation")
+	assert_true(game.shields.charge_pulses.has(0))
+	game.queue_redraw()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	game.mouse_aura = true
+	game._update_player(0.0)
+	assert_eq(game.aura_energy, 5.0, "One activation keeps partial progress for the next circle")
+	game.mouse_aura = false
+	game.shields.fields.clear()
+	game.zen_released = true
+	game._update_player(1.0)
+	assert_false(game.shields.protected(), "Releasing touch cannot create a second shield type")
+	assert_true(game.shields.fields.is_empty())
+	assert_true(game.shields.charge_pulses.is_empty())
+	game.nova_energy = game.MAX_NOVA
+	game._try_nova()
+	assert_eq(game.nova_energy, game.MAX_NOVA, "The single-shield loadout has no Nova")
